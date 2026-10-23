@@ -24,6 +24,11 @@ Definir los modelos y las interfaces que comparten todas las features, para que 
 - `LLMClient`: `generate_text` y `generate_structured(schema=...)`. Ambos devuelven `LLMUsage` (modelo, tokens, latencia, costo) para las métricas. Las fallas se reportan con `LLMError`.
 - `MessageChannel`: `send(OutboundMessage) -> SendResult`. Un envío fallido devuelve `ok=False`, no lanza excepción.
 
+- `KnowledgeBase` (ola 2): `search(query, limit) -> list[KnowledgeSnippet]`.
+- `ScreeningAgent` (ola 2), independiente del framework (la implementación usa Google ADK):
+  - `extract(candidate, new_messages, expected_fields) -> ExtractionOutcome`: turno de extracción. Devuelve solo los campos entregados o corregidos, los inválidos, el idioma, el sentimiento, si pidió opt-out o un humano, una pregunta para la FAQ y el uso de tokens.
+  - `reply(ReplyRequest) -> ReplyOutcome`: turno de respuesta. El orquestador decide qué preguntar (`ask_fields`), qué repreguntar (`retry_fields`), si hay que responder una pregunta y si toca el resumen de cierre; el agente solo redacta.
+
 **`screening.clock`**
 - `Clock` (`now()`), `SystemClock` y `FixedClock` (con `advance()`), siempre con zona horaria.
 
