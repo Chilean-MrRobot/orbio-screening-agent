@@ -8,10 +8,11 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from pydantic import SecretStr
 
 from screening.api.applications import ApplicationStarter, build_applications_router
+from screening.api.crm import build_crm_router_from_env
 from screening.api.dispatcher import BatchDispatcher, Sleep
 from screening.api.reengagement import ReengagementRunner, build_reengagement_router
 from screening.api.settings import WhatsAppSettings
@@ -43,6 +44,7 @@ def create_app(
     applications: ApplicationStarter | None = None,
     reengagement: ReengagementRunner | None = None,
     reengagement_token: SecretStr | None = None,
+    crm_router: APIRouter | None = None,
 ) -> FastAPI:
     dispatcher = BatchDispatcher(
         MessageBatcher(settings.batch_seconds), store, handler, clock, sleep
@@ -60,6 +62,8 @@ def create_app(
         app.include_router(build_applications_router(applications))
     if reengagement is not None:
         app.include_router(build_reengagement_router(reengagement, reengagement_token))
+    if crm_router is not None:
+        app.include_router(crm_router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -111,4 +115,5 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         applications=orchestrator,
         reengagement=reengagement,
         reengagement_token=SecretStr(token) if token else None,
+        crm_router=build_crm_router_from_env(repository, clock),
     )
