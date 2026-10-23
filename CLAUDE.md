@@ -67,6 +67,7 @@ Inspirado en el motor declarativo usado en Kelp. Toda la lógica de negocio conf
 - **Base de datos:** Firestore, detrás de `CandidateRepository` (en memoria para tests y desarrollo).
 - **CRM:** Streamlit, con link público para que los evaluadores lo vean.
 - **LLM:** OpenAI. Modelos configurables en `config/client.yaml`.
+- **Capa de agentes:** Google ADK, con los modelos de OpenAI vía `LiteLlm`. La orquestación por etapas es determinista (agente custom o workflow de ADK) y los `LlmAgent` solo conversan o extraen; el RAG se expone como tool.
 - **Observabilidad:** LangSmith.
 - **Canales:** WhatsApp Cloud API con número de prueba (los evaluadores prueban en vivo desde sus teléfonos registrados), chat de consola para desarrollo y SMS simulado (solo se registra).
 - **Recordatorios:** Cloud Scheduler llamando a un endpoint.
