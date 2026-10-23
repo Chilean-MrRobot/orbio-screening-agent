@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -26,11 +28,12 @@ from screening.agent.extraction import ExtractionResponse, build_outcome
 from screening.agent.guards import FAQ_TOOL_NAME, find_internal_leak
 from screening.agent.prompts import DEFAULT_PROMPTS_DIR, load_agent_prompts
 from screening.agent.runtime import AgentRun, run_agent
+from screening.agent.sentiment import SentimentClassifier, SentimentResult
 from screening.agent.tracing import configure_tracing, tracing_from_env
 from screening.clock import Clock
 from screening.config import AppConfig
 from screening.config.models import RegionConfig
-from screening.domain import Candidate, Message
+from screening.domain import Candidate, Message, MessageRole
 from screening.ports import (
     ExtractionOutcome,
     KnowledgeBase,
@@ -64,6 +67,7 @@ class AdkScreeningAgent:
         extraction_model: BaseLlm,
         reply_model: BaseLlm,
         prompts_dir: Path | str = DEFAULT_PROMPTS_DIR,
+        sentiment_classifier: SentimentClassifier | None = None,
         tracing: bool | None = None,
         history_limit: int = 20,
         timer: Callable[[], float] = time.perf_counter,
@@ -74,6 +78,7 @@ class AdkScreeningAgent:
         self.pricing = pricing
         self.extraction_model = extraction_model
         self.reply_model = reply_model
+        self.sentiment_classifier = sentiment_classifier
         self.prompts = load_agent_prompts(prompts_dir)
         self.history_limit = history_limit
         self._timer = timer
@@ -101,7 +106,8 @@ class AdkScreeningAgent:
         """Modelos de OpenAI de `config/client.yaml` vía LiteLLM (`OPENAI_API_KEY` del entorno).
 
         LiteLLM reintenta los errores transitorios (`num_retries`); `reasoning_effort` se
-        descarta solo en los modelos que no lo aceptan.
+        descarta solo en los modelos que no lo aceptan. Con `OPENAI_API_KEY` se suma el
+        clasificador de emoción (014), salvo que se pase `sentiment_classifier`.
         """
         from google.adk.models.lite_llm import LiteLlm
 
@@ -114,6 +120,9 @@ class AdkScreeningAgent:
                 drop_params=True,
                 **extra,
             )
+
+        if "sentiment_classifier" not in kwargs and os.environ.get("OPENAI_API_KEY"):
+            kwargs["sentiment_classifier"] = SentimentClassifier.from_env(config)
 
         return cls(
             config,
@@ -166,11 +175,21 @@ class AdkScreeningAgent:
                 agent, history=[], new_message=user_input, pricing=self.pricing, timer=self._timer
             )
 
-        response, usage = self._with_retry(attempt, _parse_extraction)
+        # El clasificador corre en paralelo con la extracción: no suma su latencia al turno.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            sentiment = (
+                pool.submit(self._classify, candidate, new_messages)
+                if self.sentiment_classifier
+                else None
+            )
+            response, usage = self._with_retry(attempt, _parse_extraction)
+            mood = sentiment.result() if sentiment else SentimentResult(label=None)
         outcome = build_outcome(
             response, licenses=list(region.licenses), expected_fields=expected_fields
         )
-        outcome.usage = usage
+        if mood.label is not None:  # sin etiqueta confiable queda la heurística de la extracción
+            outcome.sentiment = mood.label
+        outcome.usage = [*usage, *mood.usage]
         return outcome
 
     # --- Respuesta ----------------------------------------------------------------
@@ -209,6 +228,17 @@ class AdkScreeningAgent:
         return ReplyOutcome(text=text, usage=usage)
 
     # --- Internos -----------------------------------------------------------------
+
+    def _classify(self, candidate: Candidate, new_messages: list[Message]) -> SentimentResult:
+        """Los mensajes del candidato, previos y nuevos; el clasificador toma los últimos."""
+        assert self.sentiment_classifier is not None
+        new_ids = {m.id for m in new_messages}
+        previous = [
+            m.text
+            for m in candidate.messages
+            if m.role == MessageRole.CANDIDATE and m.id not in new_ids
+        ]
+        return self.sentiment_classifier.classify([*previous, *(m.text for m in new_messages)])
 
     def _system_prompt(self, region: RegionConfig) -> str:
         vocabulary = region.vocabulary
