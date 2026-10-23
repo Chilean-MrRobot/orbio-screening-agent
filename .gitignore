@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+*.key
+service-account*.json
+
+# Datos locales y resultados de evals
+*.sqlite
+*.db
+evals/results/
+evals/.cache/
+
+# Configuración local de Claude Code
+.claude/settings.local.json
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
