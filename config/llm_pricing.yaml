@@ -1,0 +1,28 @@
+# Precios de OpenAI en USD por millón de tokens (precios estándar, sin Batch ni Flex).
+# Fuente: https://openai.com/api/pricing — revisarlos al cambiar de modelo.
+# Un modelo con fecha (gpt-5-mini-2025-08-07) usa el precio del prefijo más largo que coincida.
+pricing:
+  models:
+    gpt-5:
+      input_per_million: 1.25
+      cached_input_per_million: 0.125
+      output_per_million: 10.00
+    gpt-5-mini:
+      input_per_million: 0.25
+      cached_input_per_million: 0.025
+      output_per_million: 2.00
+    gpt-5-nano:
+      input_per_million: 0.05
+      cached_input_per_million: 0.005
+      output_per_million: 0.40
+    gpt-4.1-mini:
+      input_per_million: 0.40
+      cached_input_per_million: 0.10
+      output_per_million: 1.60
+    gpt-4o-mini:
+      input_per_million: 0.15
+      cached_input_per_million: 0.075
+      output_per_million: 0.60
+    text-embedding-3-small:
+      input_per_million: 0.02
+      output_per_million: 0.0
