@@ -9,10 +9,17 @@ from screening.adapters.fake_knowledge import FakeKnowledgeBase
 from screening.adapters.memory import InMemoryCandidateRepository
 from screening.agent import AdkScreeningAgent
 from screening.api import create_app_from_env
-from screening.api.wiring import UnconfiguredAgent, build_storage, load_agent, load_knowledge
+from screening.api.wiring import (
+    UnconfiguredAgent,
+    build_storage,
+    load_agent,
+    load_knowledge,
+    load_summarizer,
+)
 from screening.channels import InMemoryInboundMessageStore
 from screening.clock import FixedClock
 from screening.config import AppConfig
+from screening.summary import SummaryService
 from tests.unit.conversation.conftest import APPLICATION, ScriptedAgent
 
 
@@ -51,6 +58,15 @@ def test_load_agent_with_api_key_builds_the_adk_agent(
 
     assert isinstance(agent, AdkScreeningAgent)
     assert isinstance(agent.knowledge, FakeKnowledgeBase)
+
+
+def test_load_summarizer_needs_the_api_key(app_config: AppConfig) -> None:
+    assert load_summarizer(app_config, env={}) is None
+
+    summarizer = load_summarizer(app_config, env={"OPENAI_API_KEY": "sk-test"})
+
+    assert isinstance(summarizer, SummaryService)
+    assert summarizer.model == app_config.llm.conversation_model
 
 
 def test_knowledge_without_index_falls_back_to_the_faq_words(

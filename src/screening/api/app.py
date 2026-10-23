@@ -16,7 +16,7 @@ from screening.api.dispatcher import BatchDispatcher, Sleep
 from screening.api.reengagement import ReengagementRunner, build_reengagement_router
 from screening.api.settings import WhatsAppSettings
 from screening.api.webhook import build_webhook_router
-from screening.api.wiring import build_storage, load_agent
+from screening.api.wiring import build_storage, load_agent, load_summarizer
 from screening.channels import (
     ConsoleChannel,
     InboundHandler,
@@ -94,6 +94,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         channel=channel,
         clock=clock,
         config=config,
+        summarizer=load_summarizer(config),
     )
     reengagement = ReengagementService(
         repository=repository,

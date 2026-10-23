@@ -8,12 +8,30 @@ from zoneinfo import ZoneInfo
 
 from screening.config import AppConfig
 from screening.config.models import RegionConfig
-from screening.domain import Candidate, Language, Message, MessageRole
+from screening.domain import Candidate, Language, Message, MessageRole, Sentiment
 from screening.ports import ReplyRequest
 
 WEEKDAYS_ES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 LANGUAGE_NAMES = {Language.ES: "español", Language.EN: "inglés"}
 NO_NEW_MESSAGES = "(El candidato no escribió nada nuevo: inicia o retoma la conversación.)"
+# Tono por estado de ánimo (014); `neutral` no agrega nada.
+TONE_BY_SENTIMENT = {
+    Sentiment.FRUSTRATED: (
+        "está molesto: 1 o 2 líneas, sin emojis, reconoce la molestia en pocas palabras "
+        "y ofrece hablar con una persona del equipo."
+    ),
+    Sentiment.CONFUSED: (
+        "está confundido: frases simples, explica qué necesitas y da un ejemplo de respuesta."
+    ),
+    Sentiment.RUSHED: (
+        "tiene prisa: directo al grano, sin saludos ni agradecimientos, solo la pregunta "
+        "con sus opciones."
+    ),
+}
+TONE_FRUSTRATED_HUMAN_REQUESTED = (
+    "está molesto y ya pidió una persona: 1 o 2 líneas, sin emojis, reconoce la molestia "
+    "y confírmale que alguien del equipo le contactará."
+)
 
 
 def region_for(candidate: Candidate, config: AppConfig) -> RegionConfig:
@@ -106,6 +124,9 @@ def build_turn_instructions(request: ReplyRequest, *, today: date) -> str:
         f"- Etapa: {request.stage.value}.",
         f"- Estado de ánimo del candidato: {candidate.sentiment.value}.",
     ]
+    tone = _tone(candidate)
+    if tone:
+        lines.append(f"- Tono: {tone}")
     if candidate.human_requested:
         lines.append("- El candidato pidió hablar con una persona del equipo.")
     if request.question:
@@ -125,6 +146,12 @@ def build_turn_instructions(request: ReplyRequest, *, today: date) -> str:
     elif not request.question:
         lines.append("- No hay nada que preguntar en este turno.")
     return "\n".join(lines)
+
+
+def _tone(candidate: Candidate) -> str | None:
+    if candidate.sentiment == Sentiment.FRUSTRATED and candidate.human_requested:
+        return TONE_FRUSTRATED_HUMAN_REQUESTED
+    return TONE_BY_SENTIMENT.get(candidate.sentiment)
 
 
 def _line(message: Message, agent_name: str) -> str:

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
@@ -55,6 +55,12 @@ OPEN_STATUSES = RESUMING_STATUSES | {CandidateStatus.IN_SCREENING}
 APOLOGY = "apology"
 
 
+class Summarizer(Protocol):
+    """Resumen post-conversación (spec 012): deja `candidate.summary` y sus eventos."""
+
+    def apply(self, candidate: Candidate, at: datetime) -> object: ...
+
+
 class ApplicationStartResult(BaseModel):
     outcome: IntakeOutcome
     candidate_id: str | None = None
@@ -76,6 +82,7 @@ class ConversationOrchestrator:
         clock: Clock,
         config: AppConfig,
         registry: SpecialConditionRegistry | None = None,
+        summarizer: Summarizer | None = None,
     ) -> None:
         self._repository = repository
         self._agent = agent
@@ -83,6 +90,7 @@ class ConversationOrchestrator:
         self._clock = clock
         self._config = config
         self._registry = registry
+        self._summarizer = summarizer
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
 
@@ -313,6 +321,7 @@ class ConversationOrchestrator:
         self._repository.save(candidate)
         template = evaluation.message_template
         self._send(candidate, render_template(template, candidate, self._config), template)
+        self._summarize(candidate)
 
     def _qualify(self, candidate: Candidate) -> None:
         now = self._clock.now()
@@ -330,6 +339,19 @@ class ConversationOrchestrator:
         self._repository.save(candidate)
         template = "qualified_next_steps"
         self._send(candidate, render_template(template, candidate, self._config), template)
+        self._summarize(candidate)
+
+    def _summarize(self, candidate: Candidate) -> None:
+        """Después del mensaje final, para que el candidato no espere; nunca bloquea el cierre."""
+        if self._summarizer is None:
+            return
+        now = self._clock.now()
+        try:
+            self._summarizer.apply(candidate, now)
+        except Exception as exc:
+            logger.exception("No se pudo resumir la ficha %s", candidate.id)
+            candidate.record_event(now, "summary_error", error=repr(exc))
+        self._repository.save(candidate)
 
     def _reply(
         self,
