@@ -6,6 +6,7 @@ Pipeline custom de golden dataset + LLM-as-a-judge (spec `specs/007-pipeline-eva
 evals/
   datasets/<suite>.jsonl   un caso por línea
   suites.py                qué objetivo evalúa cada suite y su umbral
+  targets/                 objetivos que llaman a la feature real (extraction, reply: agente 009)
   judge.py                 juez (prompt en prompts/judge.md)
   runner.py · metrics.py · report.py · run.py (CLI)
   results/                 reportes generados (ignorado por git)
