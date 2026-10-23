@@ -15,6 +15,7 @@ dependencies = [
     "google-adk>=2.12",
     "litellm>=1.106",
     "google-cloud-firestore>=2.34",
+    "wrapt>=1.16",
     "tzdata>=2024.1",
 ]
 

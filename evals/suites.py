@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from evals.models import EvalCase, Target, TargetOutput
+from evals.targets import extraction, reply
 from evals.targets.rag import make_rag_target
 from screening.config import AppConfig
 from screening.ports import LLMClient
@@ -33,6 +34,10 @@ SUITES: dict[str, SuiteSpec] = {
         make_target=_given_answer,
         threshold=0.9,
     ),
+    "extraction": SuiteSpec(
+        "Agente 009: mensajes → campos normalizados", extraction.make_target, 0.85
+    ),
+    "reply": SuiteSpec("Agente 009: ReplyRequest → mensaje de Sofía", reply.make_target, 0.8),
     "rag": SuiteSpec(
         description="RAG sobre la FAQ: responde con la FAQ y reconoce lo que no está",
         make_target=make_rag_target,
