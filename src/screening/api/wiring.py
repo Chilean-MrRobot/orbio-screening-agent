@@ -5,14 +5,22 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Mapping
+from pathlib import Path
 
+from screening.adapters.fake_knowledge import FakeKnowledgeBase
 from screening.adapters.memory import InMemoryCandidateRepository
 from screening.channels import InboundMessageStore, InMemoryInboundMessageStore
+from screening.clock import Clock
 from screening.config import AppConfig
 from screening.domain import Candidate, Message
+from screening.knowledge.base import EmbeddingKnowledgeBase
+from screening.knowledge.chunking import load_chunks
+from screening.knowledge.embeddings import OpenAIEmbedder
+from screening.knowledge.index import DEFAULT_INDEX_PATH, KnowledgeIndexError, load_index
 from screening.ports import (
     CandidateRepository,
     ExtractionOutcome,
+    KnowledgeBase,
     ReplyOutcome,
     ReplyRequest,
     ScreeningAgent,
@@ -22,21 +30,39 @@ logger = logging.getLogger(__name__)
 
 
 class UnconfiguredAgent:
-    """Agente de reemplazo hasta la spec 009: falla y el orquestador pide disculpas."""
+    """Agente de reemplazo sin `OPENAI_API_KEY`: falla y el orquestador pide disculpas."""
 
     def extract(
         self, candidate: Candidate, new_messages: list[Message], expected_fields: list[str]
     ) -> ExtractionOutcome:
-        raise RuntimeError("no hay un ScreeningAgent configurado (spec 009)")
+        raise RuntimeError("no hay un ScreeningAgent configurado (falta OPENAI_API_KEY, spec 009)")
 
     def reply(self, request: ReplyRequest) -> ReplyOutcome:
-        raise RuntimeError("no hay un ScreeningAgent configurado (spec 009)")
+        raise RuntimeError("no hay un ScreeningAgent configurado (falta OPENAI_API_KEY, spec 009)")
 
 
-def load_agent(config: AppConfig) -> ScreeningAgent:
-    """Punto de inyección del agente real: la spec 009 lo reemplaza por el agente ADK."""
-    logger.warning("Sin ScreeningAgent: las conversaciones responderán con una disculpa")
-    return UnconfiguredAgent()
+def load_agent(
+    config: AppConfig, clock: Clock, env: Mapping[str, str] = os.environ
+) -> ScreeningAgent:
+    """Agente ADK (spec 009) con la FAQ (spec 010). Sin `OPENAI_API_KEY`, el de reemplazo."""
+    if not env.get("OPENAI_API_KEY"):
+        logger.warning("Sin OPENAI_API_KEY: las conversaciones responderán con una disculpa")
+        return UnconfiguredAgent()
+
+    from screening.agent import AdkScreeningAgent
+
+    return AdkScreeningAgent.from_env(config, load_knowledge(config), clock=clock)
+
+
+def load_knowledge(config: AppConfig, index_path: Path | str = DEFAULT_INDEX_PATH) -> KnowledgeBase:
+    """La FAQ por embeddings; sin índice construido, coincidencia de palabras sobre la FAQ."""
+    try:
+        index = load_index(index_path)
+        embedder = OpenAIEmbedder.from_env(config.llm.embedding_model)
+        return EmbeddingKnowledgeBase.from_index(index, embedder)
+    except KnowledgeIndexError as e:
+        logger.warning("RAG degradado a coincidencia de palabras: %s", e)
+        return FakeKnowledgeBase((chunk.source, chunk.text) for chunk in load_chunks())
 
 
 def build_storage(

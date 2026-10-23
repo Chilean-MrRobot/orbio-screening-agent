@@ -80,7 +80,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
 
     orchestrator = ConversationOrchestrator(
         repository=repository,
-        agent=agent or load_agent(config),
+        agent=agent or load_agent(config, clock),
         channel=channel,
         clock=clock,
         config=config,
