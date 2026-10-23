@@ -26,6 +26,7 @@ from screening.domain import (
     CandidateStatus,
     Message,
     MessageRole,
+    ReengagementState,
     ScreeningData,
     Stage,
 )
@@ -144,6 +145,11 @@ class ConversationOrchestrator:
         candidate.record_event(
             now, "message_received", count=len(new), external_ids=[m.external_id for m in new]
         )
+        # Spec 011 (`on_candidate_reply: cancel_pending`): respondió, se cancelan los toques.
+        if candidate.reengagement.cadence is not None:
+            cadence = candidate.reengagement.cadence
+            candidate.record_event(now, "reengagement_cancelled", cadence=cadence)
+        candidate.reengagement = ReengagementState()
         self._repository.save(candidate)
 
         try:
