@@ -1,0 +1,47 @@
+# Puntaje 0–100 para ordenar la cola del recruiter. No descarta a nadie.
+# Cada componente aporta weight × value, con value entre 0 y 1. Un campo vacío aporta 0.
+scoring:
+  max_score: 100
+  components:
+    - name: experience
+      weight: 35
+      type: bands
+      field: delivery_experience.years
+      bands:              # gana el primer tramo que calza
+        - {min: 2, value: 1.0}
+        - {min: 1, value: 0.75}
+        - {min: 0.5, value: 0.5}
+        - {min: 0, value: 0.0}   # sin experiencia es válido, solo no suma
+
+    - name: availability
+      weight: 25
+      type: mapping
+      field: availability
+      mapping:
+        full_time: 1.0
+        part_time: 0.6
+        weekends: 0.3
+
+    - name: start_date
+      weight: 20
+      type: days_until    # días entre hoy y start_date
+      field: start_date
+      bands:
+        - {max: 7, value: 1.0}
+        - {max: 14, value: 0.6}
+        - {max: 30, value: 0.3}
+
+    - name: owns_vehicle
+      weight: 10
+      type: boolean
+      field: owns_vehicle
+
+    - name: schedule_flexibility
+      weight: 10
+      type: mapping
+      field: preferred_schedule
+      mapping:
+        flexible: 1.0
+        morning: 0.5
+        afternoon: 0.5
+        evening: 0.5

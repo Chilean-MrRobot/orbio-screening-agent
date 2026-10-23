@@ -1,0 +1,13 @@
+client:
+  name: Grupo Sazón
+  agent_name: Sofía
+  recruiter_sla_hours: 48   # "un reclutador te contactará en las próximas 48 h"
+
+# Modelos de OpenAI. Cambiarlos aquí no requiere tocar código.
+llm:
+  conversation_model: gpt-5-mini
+  extraction_model: gpt-5-mini
+  classifier_model: gpt-5-nano     # clasificador de emoción: modelo chico y rápido
+  judge_model: gpt-5-mini          # LLM-as-a-judge de las evaluaciones
+  embedding_model: text-embedding-3-small
+  extraction_temperature: null     # los modelos de razonamiento no aceptan temperature

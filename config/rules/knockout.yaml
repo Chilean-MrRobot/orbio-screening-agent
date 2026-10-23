@@ -1,0 +1,43 @@
+# Reglas eliminatorias. Cada regla se evalúa apenas están todos sus `requires`;
+# si falla, la conversación se cierra con `message_template` y la ficha queda
+# descartada con `reason_code`. El puntaje solo se calcula si todas pasan.
+rules:
+  - name: consent_given
+    description: El candidato acepta el tratamiento de sus datos.
+    stage: welcome
+    requires: [consent]
+    condition:
+      field: consent
+      operator: equals
+      value: true
+    reason_code: no_consent
+    message_template: disqualified_no_consent
+
+  - name: has_license
+    description: Tiene licencia de conducir vigente.
+    stage: knockout
+    requires: [has_license]
+    condition:
+      field: has_license
+      operator: equals
+      value: true
+    reason_code: no_license
+    message_template: disqualified_no_license
+
+  - name: license_matches_vehicle
+    description: Su licencia habilita el vehículo con el que repartiría (tabla por país).
+    stage: knockout
+    requires: [license_type, vehicle_type]
+    condition:
+      special: license_compatible
+    reason_code: license_vehicle_mismatch
+    message_template: disqualified_license_vehicle
+
+  - name: city_in_service_area
+    description: Vive en una ciudad con local de Grupo Sazón.
+    stage: knockout
+    requires: [city]
+    condition:
+      special: city_in_service_area
+    reason_code: out_of_service_area
+    message_template: disqualified_city

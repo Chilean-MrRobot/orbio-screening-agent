@@ -1,0 +1,35 @@
+region:
+  country: ES
+  timezone: Europe/Madrid
+  phone_prefix: "+34"
+  form_of_address: tu
+  vocabulary:
+    license: carnet de conducir
+    car: coche
+    motorcycle: moto
+
+  # Ciudades con local de Grupo Sazón. Fuera de alcance del demo: barrio, CP o distancia.
+  cities:
+    - name: Madrid
+    - name: Barcelona
+    - name: Valencia
+    - name: Sevilla
+    - name: Málaga
+      aliases: [Malaga]
+    - name: Bilbao
+    - name: Zaragoza
+
+  # Tabla simplificada para el demo: qué permiso habilita cada vehículo de reparto.
+  licenses:
+    AM:
+      vehicles: [motorcycle]   # ciclomotor hasta 50 cc
+    A1:
+      vehicles: [motorcycle]
+    A2:
+      vehicles: [motorcycle]
+    A:
+      vehicles: [motorcycle]
+    B:
+      vehicles: [car, motorcycle]
+      min_years:
+        motorcycle: 3          # el B habilita motos de 125 cc con 3 años de antigüedad

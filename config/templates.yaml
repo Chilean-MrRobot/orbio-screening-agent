@@ -1,0 +1,46 @@
+# Mensajes fijos (no generados por el LLM). Variables disponibles:
+# {first_name} {agent_name} {client_name} {license_term} {sla_hours}
+templates:
+  first_contact:
+    es: "¡Hola {first_name}! Soy {agent_name}, asistente virtual de {client_name} 👋 Vi que postulaste como repartidor. ¿Tienes 3 minutos para unas preguntas rápidas?"
+    en: "Hi {first_name}! I'm {agent_name}, {client_name}'s virtual assistant 👋 I saw you applied as a delivery driver. Got 3 minutes for a few quick questions?"
+
+  reminder_never_responded:
+    es: "Hola {first_name}, te escribí ayer por tu postulación a {client_name}. Si te sigue interesando, respóndeme y lo vemos en 3 minutos."
+    en: "Hi {first_name}, I messaged you yesterday about your {client_name} application. If you're still interested, just reply and we'll be done in 3 minutes."
+
+  reminder_sms:
+    es: "{client_name}: {first_name}, tu postulación a repartidor sigue abierta. Responde a nuestro WhatsApp para continuar."
+    en: "{client_name}: {first_name}, your delivery driver application is still open. Reply to our WhatsApp to continue."
+
+  reminder_abandoned:
+    es: "¡Hola de nuevo {first_name}! Nos quedaron un par de preguntas pendientes. ¿Seguimos?"
+    en: "Hi again {first_name}! We still have a couple of questions left. Shall we continue?"
+
+  reminder_abandoned_sms:
+    es: "{client_name}: {first_name}, te faltan solo unas preguntas para completar tu postulación. Respóndenos por WhatsApp."
+    en: "{client_name}: {first_name}, you're just a few questions away from completing your application. Reply on WhatsApp."
+
+  closing_no_response:
+    es: "{first_name}, como no tuvimos respuesta, cerramos tu postulación por ahora. Si te sigue interesando, escríbenos cuando quieras."
+    en: "{first_name}, since we didn't hear back, we're closing your application for now. If you're still interested, message us anytime."
+
+  disqualified_no_consent:
+    es: "Entendido, {first_name}. Sin tu autorización no podemos seguir con la postulación. ¡Gracias por tu interés!"
+    en: "Understood, {first_name}. Without your consent we can't continue with the application. Thanks for your interest!"
+
+  disqualified_no_license:
+    es: "Gracias por contarme, {first_name}. Por ahora necesitamos repartidores con {license_term} vigente, así que no podemos avanzar. ¡Suerte!"
+    en: "Thanks for letting me know, {first_name}. For now we need drivers with a valid driver's license, so we can't move forward. Good luck!"
+
+  disqualified_license_vehicle:
+    es: "Gracias, {first_name}. Tu {license_term} no habilita el vehículo con el que repartirías, así que por ahora no podemos avanzar."
+    en: "Thanks, {first_name}. Your license doesn't cover the vehicle you'd use for deliveries, so we can't move forward for now."
+
+  disqualified_city:
+    es: "Gracias, {first_name}. Por ahora no tenemos locales en tu ciudad, así que no podemos avanzar. ¡Ojalá pronto!"
+    en: "Thanks, {first_name}. We don't have locations in your city yet, so we can't move forward. Hopefully soon!"
+
+  qualified_next_steps:
+    es: "¡Listo, {first_name}! 🎉 Tu postulación quedó completa. Un reclutador de {client_name} te contactará en las próximas {sla_hours} h."
+    en: "All set, {first_name}! 🎉 Your application is complete. A {client_name} recruiter will contact you within {sla_hours} hours."

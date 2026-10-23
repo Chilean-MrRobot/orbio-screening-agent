@@ -1,0 +1,28 @@
+region:
+  country: MX
+  timezone: America/Mexico_City
+  phone_prefix: "+52"
+  form_of_address: tu
+  vocabulary:
+    license: licencia de manejo
+    car: carro
+    motorcycle: moto
+
+  # Ciudades con local de Grupo Sazón. Fuera de alcance del demo: colonia, CP o distancia.
+  cities:
+    - name: Ciudad de México
+      aliases: [CDMX, Ciudad de Mexico, DF, México DF]
+    - name: Guadalajara
+    - name: Monterrey
+    - name: Puebla
+    - name: Querétaro
+      aliases: [Queretaro]
+
+  # Simplificado: en México los tipos de licencia varían por estado.
+  licenses:
+    A:
+      vehicles: [car, motorcycle]
+    B:
+      vehicles: [car]
+    motociclista:
+      vehicles: [motorcycle]
