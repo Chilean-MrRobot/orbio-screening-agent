@@ -6,6 +6,7 @@ import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from screening.adapters.fake_knowledge import FakeKnowledgeBase
 from screening.adapters.memory import InMemoryCandidateRepository
@@ -26,7 +27,12 @@ from screening.ports import (
     ScreeningAgent,
 )
 
+if TYPE_CHECKING:
+    from screening.summary import SummaryService
+
 logger = logging.getLogger(__name__)
+
+SUMMARY_TIMEOUT_SECONDS = 30.0
 
 
 class UnconfiguredAgent:
@@ -52,6 +58,24 @@ def load_agent(
     from screening.agent import AdkScreeningAgent
 
     return AdkScreeningAgent.from_env(config, load_knowledge(config), clock=clock)
+
+
+def load_summarizer(
+    config: AppConfig, env: Mapping[str, str] = os.environ
+) -> SummaryService | None:
+    """Resumen post-conversación (spec 012). Sin `OPENAI_API_KEY`, las fichas quedan sin él."""
+    api_key = env.get("OPENAI_API_KEY")
+    if not api_key:
+        logger.warning("Sin OPENAI_API_KEY: las fichas cerradas no tendrán resumen")
+        return None
+
+    import openai
+
+    from screening.adapters.openai_llm import OpenAILLMClient
+    from screening.summary import SummaryService
+
+    sdk = openai.OpenAI(api_key=api_key, max_retries=0, timeout=SUMMARY_TIMEOUT_SECONDS)
+    return SummaryService(OpenAILLMClient.from_env(client=sdk), config)
 
 
 def load_knowledge(config: AppConfig, index_path: Path | str = DEFAULT_INDEX_PATH) -> KnowledgeBase:

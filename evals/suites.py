@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from evals.models import EvalCase, Target, TargetOutput
-from evals.targets import extraction, reply
+from evals.targets import extraction, reply, summary
 from evals.targets.rag import make_rag_target
 from screening.config import AppConfig
 from screening.ports import LLMClient
@@ -43,4 +43,5 @@ SUITES: dict[str, SuiteSpec] = {
         make_target=make_rag_target,
         threshold=0.8,
     ),
+    "summary": SuiteSpec("Resumen 012: ficha + conversación → resumen", summary.make_target, 0.8),
 }
