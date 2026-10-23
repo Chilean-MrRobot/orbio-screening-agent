@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from evals.models import EvalCase, Target, TargetOutput
+from evals.targets.rag import make_rag_target
 from screening.config import AppConfig
 from screening.ports import LLMClient
 
@@ -31,5 +32,10 @@ SUITES: dict[str, SuiteSpec] = {
         description="Valida al juez: paráfrasis deben pasar y contradicciones fallar",
         make_target=_given_answer,
         threshold=0.9,
+    ),
+    "rag": SuiteSpec(
+        description="RAG sobre la FAQ: responde con la FAQ y reconoce lo que no está",
+        make_target=make_rag_target,
+        threshold=0.8,
     ),
 }
