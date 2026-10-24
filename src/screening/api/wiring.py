@@ -75,7 +75,8 @@ def load_summarizer(
     from screening.summary import SummaryService
 
     sdk = openai.OpenAI(api_key=api_key, max_retries=0, timeout=SUMMARY_TIMEOUT_SECONDS)
-    return SummaryService(OpenAILLMClient.from_env(client=sdk), config)
+    llm = OpenAILLMClient.from_env(client=sdk, reasoning_effort=config.llm.reasoning_effort)
+    return SummaryService(llm, config)
 
 
 def load_knowledge(config: AppConfig, index_path: Path | str = DEFAULT_INDEX_PATH) -> KnowledgeBase:

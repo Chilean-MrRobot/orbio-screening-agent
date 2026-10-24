@@ -11,3 +11,8 @@ llm:
   judge_model: gpt-5-mini          # LLM-as-a-judge de las evaluaciones
   embedding_model: text-embedding-3-small
   extraction_temperature: null     # los modelos de razonamiento no aceptan temperature
+  # Esfuerzo de razonamiento (minimal | low | medium | high), medido con las evals:
+  # minimal baja la latencia a ~2 s por llamada sin perder calidad en respuesta, resumen,
+  # emoción ni RAG; la extracción necesita low (correcciones, confirmación, "mi coche").
+  reasoning_effort: minimal
+  extraction_reasoning_effort: low

@@ -8,6 +8,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI
 from pydantic import SecretStr
 
@@ -78,6 +79,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
     Arma el orquestador real: repositorio según `SCREENING_REPOSITORY`, WhatsApp si hay
     credenciales de envío (si no, consola) y el agente de `load_agent` salvo que se inyecte.
     """
+    load_dotenv()  # en local; en Cloud Run las variables vienen del servicio
     logging.basicConfig(level=logging.INFO)
     settings = WhatsAppSettings.from_env()
     config = load_config()

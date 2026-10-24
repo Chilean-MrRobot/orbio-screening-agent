@@ -65,6 +65,14 @@ class LLMConfig(StrictModel):
     judge_model: str
     embedding_model: str
     extraction_temperature: float | None = None
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = Field(
+        default=None,
+        description="Esfuerzo de razonamiento de gpt-5: menos esfuerzo, menos latencia.",
+    )
+    extraction_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = Field(
+        default=None,
+        description="Esfuerzo propio de la extracción; si es null, usa `reasoning_effort`.",
+    )
 
 
 # --- Regiones ---------------------------------------------------------------------

@@ -100,18 +100,17 @@ class AdkScreeningAgent:
         clock: Clock,
         pricing: PricingTable | None = None,
         num_retries: int = 2,
-        reasoning_effort: str | None = "low",
         **kwargs: Any,
     ) -> AdkScreeningAgent:
         """Modelos de OpenAI de `config/client.yaml` vía LiteLLM (`OPENAI_API_KEY` del entorno).
 
-        LiteLLM reintenta los errores transitorios (`num_retries`); `reasoning_effort` se
+        LiteLLM reintenta los errores transitorios (`num_retries`); `llm.reasoning_effort` se
         descarta solo en los modelos que no lo aceptan. Con `OPENAI_API_KEY` se suma el
         clasificador de emoción (014), salvo que se pase `sentiment_classifier`.
         """
         from google.adk.models.lite_llm import LiteLlm
 
-        def model(name: str) -> LiteLlm:
+        def model(name: str, reasoning_effort: str | None) -> LiteLlm:
             extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
             return LiteLlm(
                 model=f"openai/{name}",
@@ -129,8 +128,11 @@ class AdkScreeningAgent:
             knowledge,
             clock=clock,
             pricing=pricing or load_pricing(),
-            extraction_model=model(config.llm.extraction_model),
-            reply_model=model(config.llm.conversation_model),
+            extraction_model=model(
+                config.llm.extraction_model,
+                config.llm.extraction_reasoning_effort or config.llm.reasoning_effort,
+            ),
+            reply_model=model(config.llm.conversation_model, config.llm.reasoning_effort),
             **kwargs,
         )
 

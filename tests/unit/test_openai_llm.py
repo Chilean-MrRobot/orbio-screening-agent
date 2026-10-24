@@ -157,6 +157,17 @@ def test_temperature_is_sent_when_set(pricing, sleeps) -> None:
     assert fake.requests[0]["temperature"] == 0.2
 
 
+def test_reasoning_effort_is_sent_only_when_configured(pricing, sleeps) -> None:
+    client, fake = make_client(pricing, sleeps, completion("ok"), completion("ok"))
+
+    client.generate_text(system="s", messages=MESSAGES, model=MODEL)
+    client.reasoning_effort = "minimal"
+    client.generate_text(system="s", messages=MESSAGES, model=MODEL)
+
+    assert "reasoning_effort" not in fake.requests[0]
+    assert fake.requests[1]["reasoning_effort"] == "minimal"
+
+
 def test_usage_has_tokens_latency_and_cost(pricing, sleeps) -> None:
     client, _ = make_client(
         pricing,

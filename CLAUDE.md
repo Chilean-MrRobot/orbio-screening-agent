@@ -65,7 +65,7 @@ Inspirado en el motor declarativo usado en Kelp. Toda la lógica de negocio conf
 
 - **API y webhook de WhatsApp:** FastAPI, desplegado en Cloud Run.
 - **Base de datos:** Firestore, detrás de `CandidateRepository` (en memoria para tests y desarrollo).
-- **CRM:** Streamlit, con link público para que los evaluadores lo vean.
+- **Panel de recruiters ("CRM"):** es nuestro propio panel en Streamlit, no un CRM externo. Link público para los evaluadores, protegido con una contraseña simple.
 - **LLM:** OpenAI. Modelos configurables en `config/client.yaml`.
 - **Capa de agentes:** Google ADK, con los modelos de OpenAI vía `LiteLlm`. La orquestación por etapas es determinista (agente custom o workflow de ADK) y los `LlmAgent` solo conversan o extraen; el RAG se expone como tool.
 - **Observabilidad:** LangSmith.
@@ -80,6 +80,16 @@ Inspirado en el motor declarativo usado en Kelp. Toda la lógica de negocio conf
 - Métricas iniciales: **accuracy, latencia y costo en tokens**.
 - Se corre a pedido (`pytest -m eval`), no en cada test.
 - No tiene que escalar, pero sí dejar las bases y una guía para hacerlo. El resto (más métricas, CI de evals) es nice-to-have.
+
+## Escalabilidad
+
+Es un demo, pero cada pieza debe poder escalar sin reescribirse (meta de referencia: 10K postulaciones por semana):
+
+- Procesos sin estado propio: todo el estado vive en Firestore, nunca en la memoria del proceso. Nada de locks, timers ni cachés en memoria que supongan una sola instancia.
+- Concurrencia entre instancias resuelta en la base (transacciones o precondiciones), no con locks locales.
+- Nada de recorrer todas las fichas: consultas por índice (`status`, `next_touch_at`) y paginación.
+- Trabajo diferido con colas (Cloud Tasks / Scheduler), no con tareas en segundo plano dentro de una request.
+- Si algo se simplifica para el demo, se documenta como tal junto con el camino para escalarlo.
 
 ## Costos
 

@@ -36,6 +36,7 @@ class OpenAILLMClient:
         client: Any | None = None,
         max_retries: int = 2,
         backoff_seconds: float = 0.5,
+        reasoning_effort: str | None = None,
         tracing: bool | None = None,
         sleep: Callable[[float], None] = time.sleep,
         timer: Callable[[], float] = time.perf_counter,
@@ -43,6 +44,7 @@ class OpenAILLMClient:
         self.pricing = pricing
         self.max_retries = max_retries
         self.backoff_seconds = backoff_seconds
+        self.reasoning_effort = reasoning_effort
         self._sleep = sleep
         self._timer = timer
 
@@ -68,7 +70,7 @@ class OpenAILLMClient:
         model: str,
         temperature: float | None = None,
     ) -> TextResult:
-        request = _request(system, messages, model, temperature)
+        request = _request(system, messages, model, temperature, self.reasoning_effort)
         text, usage = self._complete(request, model, parse=lambda content: content)
         return TextResult(text=text, usage=usage)
 
@@ -81,7 +83,7 @@ class OpenAILLMClient:
         model: str,
         temperature: float | None = None,
     ) -> StructuredResult[T]:
-        request = _request(system, messages, model, temperature)
+        request = _request(system, messages, model, temperature, self.reasoning_effort)
         request["response_format"] = {
             "type": "json_schema",
             "json_schema": {
@@ -177,7 +179,11 @@ def _strict(node: Any, defs: dict[str, Any]) -> Any:
 
 
 def _request(
-    system: str, messages: list[ChatMessage], model: str, temperature: float | None
+    system: str,
+    messages: list[ChatMessage],
+    model: str,
+    temperature: float | None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     request: dict[str, Any] = {
         "model": model,
@@ -186,6 +192,8 @@ def _request(
     }
     if temperature is not None:  # los modelos de razonamiento rechazan `temperature`
         request["temperature"] = temperature
+    if reasoning_effort is not None:
+        request["reasoning_effort"] = reasoning_effort
     return request
 
 

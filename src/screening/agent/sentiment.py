@@ -63,7 +63,8 @@ class SentimentClassifier:
         """`OpenAILLMClient` con `OPENAI_API_KEY` del entorno."""
         from screening.adapters.openai_llm import OpenAILLMClient
 
-        return cls.from_config(config, OpenAILLMClient.from_env(), **kwargs)
+        llm = OpenAILLMClient.from_env(reasoning_effort=config.llm.reasoning_effort)
+        return cls.from_config(config, llm, **kwargs)
 
     def classify(self, texts: list[str]) -> SentimentResult:
         recent = [t.strip() for t in texts if t.strip()][-self.message_limit :]

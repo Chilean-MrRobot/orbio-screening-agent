@@ -6,6 +6,8 @@ import argparse
 import sys
 from collections.abc import Mapping, Sequence
 
+from dotenv import load_dotenv
+
 from evals.dataset import load_suite
 from evals.judge import Judge
 from evals.models import CaseResult
@@ -32,11 +34,12 @@ def main(
     parser.add_argument("--results-dir", help="carpeta del reporte (por defecto evals/results)")
     args = parser.parse_args(argv)
 
+    load_dotenv()
     config = config or load_config()
     if llm is None:
         from screening.adapters.openai_llm import OpenAILLMClient
 
-        llm = OpenAILLMClient.from_env()
+        llm = OpenAILLMClient.from_env(reasoning_effort=config.llm.reasoning_effort)
     spec = suites[args.suite]
     cases = load_suite(args.suite, args.datasets_dir)[: args.limit]
 
