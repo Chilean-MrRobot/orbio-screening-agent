@@ -14,6 +14,7 @@ from screening.api.wiring import (
     UnconfiguredAgent,
     build_lease_store,
     build_storage,
+    build_task_queue,
     load_agent,
     load_knowledge,
     load_summarizer,
@@ -22,6 +23,7 @@ from screening.channels import InMemoryInboundMessageStore
 from screening.clock import FixedClock
 from screening.config import AppConfig
 from screening.summary import SummaryService
+from screening.tasks import CloudTasksQueue
 from tests.unit.conversation.conftest import APPLICATION, ScriptedAgent
 from tests.unit.fake_firestore import FakeFirestoreClient
 
@@ -36,6 +38,33 @@ def test_memory_storage_is_the_default() -> None:
 def test_unknown_storage_backend_fails() -> None:
     with pytest.raises(ValueError, match="SCREENING_REPOSITORY"):
         build_storage({"SCREENING_REPOSITORY": "postgres"})
+
+
+def test_local_task_queue_is_the_default(clock: FixedClock) -> None:
+    queue, token = build_task_queue(clock, {})
+
+    assert queue is None  # create_app arma la LocalTaskQueue
+    assert token is None
+
+
+def test_cloud_task_queue_from_env(clock: FixedClock, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("google.cloud.tasks_v2.CloudTasksClient", lambda: object())
+    env = {
+        "TASKS_BACKEND": "cloud",
+        "TASKS_TOKEN": "tok",
+        "CLOUD_TASKS_PROJECT": "p",
+        "TASKS_SERVICE_URL": "https://x.run.app",
+    }
+
+    queue, token = build_task_queue(clock, env)
+
+    assert isinstance(queue, CloudTasksQueue)
+    assert token is not None and token.get_secret_value() == "tok"
+
+
+def test_cloud_task_queue_without_token_fails(clock: FixedClock) -> None:
+    with pytest.raises(ValueError, match="TASKS_TOKEN"):
+        build_task_queue(clock, {"TASKS_BACKEND": "cloud"})
 
 
 def test_memory_lease_store_is_the_default() -> None:
@@ -107,6 +136,7 @@ def test_app_from_env_wires_the_orchestrator(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("WHATSAPP_APP_SECRET", "s")
     monkeypatch.delenv("WHATSAPP_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("SCREENING_REPOSITORY", raising=False)
+    monkeypatch.delenv("TASKS_BACKEND", raising=False)
 
     app = create_app_from_env(agent=ScriptedAgent())
     response = TestClient(app).post("/applications", json=APPLICATION)

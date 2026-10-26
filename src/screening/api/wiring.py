@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pydantic import SecretStr
+
 from screening.adapters.fake_knowledge import FakeKnowledgeBase
 from screening.adapters.memory import InMemoryCandidateRepository, InMemoryLeaseStore
 from screening.channels import InboundMessageStore, InMemoryInboundMessageStore
@@ -27,6 +29,7 @@ from screening.ports import (
     ReplyRequest,
     ScreeningAgent,
 )
+from screening.tasks import CloudTasksQueue, TaskQueue, TaskQueueSettings
 
 if TYPE_CHECKING:
     from google.cloud import firestore
@@ -110,6 +113,19 @@ def build_storage(
 
     client = _firestore_client(env)
     return FirestoreCandidateRepository(client), FirestoreInboundMessageStore(client)
+
+
+def build_task_queue(
+    clock: Clock, env: Mapping[str, str] = os.environ
+) -> tuple[TaskQueue | None, SecretStr | None]:
+    """`TASKS_BACKEND=cloud` usa Cloud Tasks (spec 016); por defecto, `(None, token)`.
+
+    `None` deja que `create_app` arme la cola local, que necesita la app para ejecutar.
+    """
+    settings = TaskQueueSettings.from_env(env)
+    if settings.backend == "local":
+        return None, settings.token
+    return CloudTasksQueue.from_settings(settings, clock), settings.token
 
 
 def build_lease_store(env: Mapping[str, str] = os.environ) -> LeaseStore:

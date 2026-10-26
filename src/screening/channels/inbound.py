@@ -1,13 +1,13 @@
 """Mensajes entrantes: modelo, persistencia, agrupación y handlers.
 
-La persistencia en Firestore llega en la ola 2; aquí están la interfaz y la versión en memoria.
+La persistencia en Firestore está en `adapters/firestore.py`; aquí, la interfaz y la versión en
+memoria. La agrupación en lotes la hace la cola de tareas (spec 016).
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -60,13 +60,23 @@ class InboundMessageStore(Protocol):
 
     def list_unprocessed(self) -> list[InboundMessage]: ...
 
-
-class InboundHandler(Protocol):
-    def handle(self, batch: InboundBatch) -> None: ...
+    def list_unprocessed_for(self, sender: str) -> list[InboundMessage]:
+        """Sin procesar de un remitente, por consulta indexada (spec 016)."""
+        ...
 
 
 class CandidateBusyError(Exception):
-    """El handler no pudo tomar al candidato; el lote no se procesó y hay que reintentarlo."""
+    """El handler no pudo tomar el lease del candidato (spec 015): reintentar más tarde.
+
+    `InboundHandler.handle` la lanza en vez de tragarla; la tarea de la spec 016 responde
+    503 y Cloud Tasks reintenta con backoff.
+    """
+
+
+class InboundHandler(Protocol):
+    def handle(self, batch: InboundBatch) -> None:
+        """Puede lanzar `CandidateBusyError`; cualquier excepción deja el lote sin procesar."""
+        ...
 
 
 class InMemoryInboundMessageStore:
@@ -93,43 +103,8 @@ class InMemoryInboundMessageStore:
     def list_unprocessed(self) -> list[InboundMessage]:
         return [m.model_copy(deep=True) for m in self._items.values() if not m.processed]
 
-
-@dataclass
-class _Pending:
-    deadline: datetime
-    messages: list[InboundMessage] = field(default_factory=list)
-
-
-class MessageBatcher:
-    """Ventana deslizante por remitente: cada mensaje nuevo reinicia el plazo.
-
-    Es puro y síncrono (el tiempo entra como argumento); quien decide cuándo despertar es
-    el despachador de la API.
-    """
-
-    def __init__(self, window_seconds: float) -> None:
-        self._window = timedelta(seconds=window_seconds)
-        self._pending: dict[str, _Pending] = {}
-
-    def add(self, message: InboundMessage, now: datetime) -> None:
-        pending = self._pending.setdefault(message.sender, _Pending(deadline=now))
-        pending.messages.append(message)
-        pending.deadline = now + self._window
-
-    def seconds_until_due(self, sender: str, now: datetime) -> float | None:
-        pending = self._pending.get(sender)
-        if pending is None:
-            return None
-        return max(0.0, (pending.deadline - now).total_seconds())
-
-    def pop(self, sender: str) -> InboundBatch | None:
-        pending = self._pending.pop(sender, None)
-        if pending is None:
-            return None
-        return InboundBatch(sender=sender, messages=pending.messages)
-
-    def pop_all(self) -> list[InboundBatch]:
-        return [batch for sender in list(self._pending) if (batch := self.pop(sender))]
+    def list_unprocessed_for(self, sender: str) -> list[InboundMessage]:
+        return [m for m in self.list_unprocessed() if m.sender == sender]
 
 
 class LoggingInboundHandler:

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
-from collections.abc import Callable, Coroutine
-from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -18,6 +15,7 @@ from screening.api import WhatsAppSettings, create_app
 from screening.channels import InboundBatch, InMemoryInboundMessageStore
 from screening.clock import FixedClock
 from screening.conversation import CandidateBusy
+from tests.unit.fake_timer import FakeTimer, eventually, run
 
 APP_SECRET = "app-secret"
 VERIFY_TOKEN = "verify-me"
@@ -34,39 +32,6 @@ class RecordingHandler:
         if self.fail:
             raise RuntimeError("boom")
         self.batches.append(batch)
-
-
-class FakeTimer:
-    """`sleep` falso: duerme hasta que el test avanza el `FixedClock`."""
-
-    def __init__(self, clock: FixedClock) -> None:
-        self.clock = clock
-        self._waiters: list[tuple[datetime, asyncio.Future[None]]] = []
-
-    async def sleep(self, seconds: float) -> None:
-        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-        self._waiters.append((self.clock.now() + timedelta(seconds=seconds), future))
-        await future
-
-    async def advance(self, seconds: float) -> None:
-        self.clock.advance(seconds=seconds)
-        for _ in range(5):
-            due = [(at, f) for at, f in self._waiters if at <= self.clock.now()]
-            self._waiters = [w for w in self._waiters if w not in due]
-            for _, future in due:
-                if not future.done():
-                    future.set_result(None)
-            await asyncio.sleep(0.01)
-
-
-async def eventually(condition: Callable[[], bool], timeout: float = 2.0) -> None:
-    async with asyncio.timeout(timeout):
-        while not condition():
-            await asyncio.sleep(0.01)
-
-
-def run[T](coro: Coroutine[Any, Any, T]) -> T:
-    return asyncio.run(coro)
 
 
 @pytest.fixture
@@ -306,7 +271,117 @@ def test_non_text_message_is_persisted_without_text(
     assert stored.text is None
 
 
-# --- Agrupación ---------------------------------------------------------------------
+# --- Encolado (spec 016) -------------------------------------------------------------
+
+
+class RecordingQueue:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[tuple[str, dict[str, Any], float, str]] = []
+        self.fail = fail
+
+    def enqueue(
+        self, path: str, payload: dict[str, Any], *, delay_seconds: float, task_id: str
+    ) -> bool:
+        if self.fail:
+            raise ConnectionError("cola caída")
+        created = all(task_id != call[3] for call in self.calls)
+        self.calls.append((path, payload, delay_seconds, task_id))
+        return created
+
+
+def make_queued_app(
+    settings: WhatsAppSettings,
+    store: InMemoryInboundMessageStore,
+    handler: RecordingHandler,
+    clock: FixedClock,
+    queue: RecordingQueue,
+) -> FastAPI:
+    return create_app(
+        settings,
+        store=store,
+        handler=handler,
+        clock=clock,
+        task_queue=queue,
+        tasks_token=SecretStr("tok"),
+    )
+
+
+def test_webhook_enqueues_instead_of_processing(
+    settings: WhatsAppSettings,
+    store: InMemoryInboundMessageStore,
+    handler: RecordingHandler,
+    clock: FixedClock,
+) -> None:
+    queue = RecordingQueue()
+    app = make_queued_app(settings, store, handler, clock, queue)
+    payload = webhook_payload(
+        [
+            text_message("wamid.1", "hola", sender="34600111222"),
+            text_message("wamid.2", "buenas", sender="5215512345678"),
+            text_message("wamid.3", "¿sigues?", sender="34600111222"),
+        ]
+    )
+    body, headers = signed_post(payload)
+
+    with TestClient(app) as client:
+        assert client.post(URL, content=body, headers=headers).status_code == 200
+
+    assert handler.batches == []
+    assert [(path, payload, delay) for path, payload, delay, _ in queue.calls] == [
+        ("/tasks/process-inbound", {"sender": "+34600111222"}, 8),
+        ("/tasks/process-inbound", {"sender": "+525512345678"}, 8),
+    ]
+    assert len(store.list_unprocessed()) == 3
+
+
+def test_duplicate_still_unprocessed_is_enqueued_again(
+    settings: WhatsAppSettings,
+    store: InMemoryInboundMessageStore,
+    handler: RecordingHandler,
+    clock: FixedClock,
+) -> None:
+    queue = RecordingQueue()
+    app = make_queued_app(settings, store, handler, clock, queue)
+    body, headers = signed_post(webhook_payload([text_message("wamid.1", "hola")]))
+    client = TestClient(app)
+
+    client.post(URL, content=body, headers=headers)
+    client.post(URL, content=body, headers=headers)  # reintento de Meta, aún sin procesar
+    store.mark_processed(["wamid.1"])
+    client.post(URL, content=body, headers=headers)  # ya procesado: se ignora
+
+    assert len(queue.calls) == 2
+    assert queue.calls[0][3] == queue.calls[1][3]  # mismo nombre: Cloud Tasks no duplica
+
+
+def test_queue_failure_returns_500_and_keeps_message(
+    settings: WhatsAppSettings,
+    store: InMemoryInboundMessageStore,
+    handler: RecordingHandler,
+    clock: FixedClock,
+) -> None:
+    app = make_queued_app(settings, store, handler, clock, RecordingQueue(fail=True))
+    body, headers = signed_post(webhook_payload([text_message("wamid.1", "hola")]))
+
+    response = TestClient(app, raise_server_exceptions=False).post(
+        URL, content=body, headers=headers
+    )
+
+    assert response.status_code == 500
+    assert [m.external_id for m in store.list_unprocessed()] == ["wamid.1"]
+
+
+def test_create_app_requires_token_with_external_queue(
+    settings: WhatsAppSettings,
+    store: InMemoryInboundMessageStore,
+    handler: RecordingHandler,
+    clock: FixedClock,
+) -> None:
+    with pytest.raises(ValueError, match="tasks_token"):
+        create_app(settings, store=store, handler=handler, clock=clock, task_queue=RecordingQueue())
+
+
+# --- Agrupación de punta a punta con la cola local ---------------------------------
 
 
 def make_async_app(
@@ -324,6 +399,11 @@ def async_client(app: FastAPI) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
+async def post_text(client: httpx.AsyncClient, wamid: str, text: str, sender: str) -> None:
+    body, headers = signed_post(webhook_payload([text_message(wamid, text, sender=sender)]))
+    assert (await client.post(URL, content=body, headers=headers)).status_code == 200
+
+
 def test_consecutive_messages_are_batched(
     settings: WhatsAppSettings,
     store: InMemoryInboundMessageStore,
@@ -334,20 +414,45 @@ def test_consecutive_messages_are_batched(
 
     async def scenario() -> None:
         async with async_client(app) as client:
-            for i, text in enumerate(["hola", "soy Lucía", "tengo moto"]):
-                body, headers = signed_post(webhook_payload([text_message(f"wamid.{i}", text)]))
-                assert (await client.post(URL, content=body, headers=headers)).status_code == 200
-                await timer.advance(3)
+            await post_text(client, "wamid.0", "hola", "34600111222")
+            await timer.advance(3)
+            await post_text(client, "wamid.1", "soy Lucía", "34600111222")
+            await timer.advance(3)
+            await post_text(client, "wamid.2", "tengo moto", "34600111222")
 
-            assert handler.batches == []  # 3 s desde el último: la ventana sigue abierta
-            await timer.advance(5)
+            assert handler.batches == []  # 6 s desde el primero: la ventana sigue abierta
+            await timer.advance(2)
             await eventually(lambda: len(handler.batches) == 1)
+            await timer.advance(30)
 
     run(scenario())
 
-    batch = handler.batches[0]
+    [batch] = handler.batches
     assert batch.sender == "+34600111222"
     assert batch.text == "hola\nsoy Lucía\ntengo moto"
+    assert store.list_unprocessed() == []
+
+
+def test_message_in_the_next_window_is_never_lost(
+    settings: WhatsAppSettings,
+    store: InMemoryInboundMessageStore,
+    handler: RecordingHandler,
+    clock: FixedClock,
+) -> None:
+    app, timer = make_async_app(settings, store, handler, clock)
+
+    async def scenario() -> None:
+        async with async_client(app) as client:
+            await post_text(client, "wamid.0", "hola", "34600111222")
+            await timer.advance(8)  # vence la primera ventana
+            await eventually(lambda: len(handler.batches) == 1)
+            await post_text(client, "wamid.1", "¿sigues?", "34600111222")
+            await timer.advance(8)
+            await eventually(lambda: len(handler.batches) == 2)
+
+    run(scenario())
+
+    assert [b.text for b in handler.batches] == ["hola", "¿sigues?"]
     assert store.list_unprocessed() == []
 
 
@@ -390,8 +495,7 @@ def test_failing_handler_leaves_messages_unprocessed(
 
     async def scenario() -> None:
         async with async_client(app) as client:
-            body, headers = signed_post(webhook_payload([text_message("wamid.1", "hola")]))
-            await client.post(URL, content=body, headers=headers)
+            await post_text(client, "wamid.1", "hola", "34600111222")
             await timer.advance(8)
             await eventually(lambda: "boom" in caplog.text)
 

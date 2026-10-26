@@ -136,7 +136,7 @@ Rutas: `GET /webhooks/whatsapp`, `POST /webhooks/whatsapp`, `GET /healthz`.
 5. **Se persiste antes de procesar** (`store.add`). Si el ID de Meta ya existía, `add` devuelve `False` y el mensaje **se descarta (deduplicación)**. Si el store falla, el webhook responde 500 para que Meta reintente.
 6. Se entrega al despachador de lotes y se responde **200 de inmediato**; el procesamiento ocurre fuera de la request.
 
-**Agrupación (`BatchDispatcher` + `MessageBatcher`)**
+**Agrupación (`BatchDispatcher` + `MessageBatcher`)** — *reemplazada por la spec 016 (Cloud Tasks); se conserva como historia de la decisión.*
 - Cada mensaje nuevo de un remitente reinicia su plazo: `deadline = now + WHATSAPP_BATCH_SECONDS` (por defecto 8 s). Ventana deslizante: si el candidato escribe "hola", "soy Lucía" y "tengo moto" con menos de 8 s entre cada uno, se entregan en **un solo lote** 8 s después del último.
 - Cada mensaje programa un temporizador (`asyncio`) que duerme hasta el plazo; al despertar recalcula con el `Clock` y, si el plazo se movió, vuelve a dormir. El primero que encuentra el lote vencido lo saca (`pop`) y los demás ya no encuentran nada.
 - El lote se entrega a `InboundHandler.handle` en un hilo (`asyncio.to_thread`) para no bloquear el webhook con el LLM. Si termina bien, los mensajes se marcan `processed`. Si lanza excepción, se registra y los mensajes quedan sin procesar (`list_unprocessed` permite recuperarlos).

@@ -1,4 +1,4 @@
-"""Webhook de WhatsApp Cloud API: verificación, firma, persistencia y deduplicación."""
+"""Webhook de WhatsApp Cloud API: verificación, firma, persistencia, deduplicación y encolado."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from screening.api.dispatcher import BatchDispatcher
+from screening.api.inbound_tasks import InboundScheduler
 from screening.api.settings import WhatsAppSettings
 from screening.channels import InboundMessage, InboundMessageStore, normalize_whatsapp_phone
 from screening.clock import Clock
@@ -138,10 +138,16 @@ def extract_messages(
     return result
 
 
+def _still_pending(store: InboundMessageStore, external_id: str) -> bool:
+    """Un duplicado aún sin procesar se vuelve a encolar: cubre un encolado que falló."""
+    stored = store.get(external_id)
+    return stored is not None and not stored.processed
+
+
 def build_webhook_router(
     settings: WhatsAppSettings,
     store: InboundMessageStore,
-    dispatcher: BatchDispatcher,
+    scheduler: InboundScheduler,
     clock: Clock,
 ) -> APIRouter:
     router = APIRouter()
@@ -174,12 +180,18 @@ def build_webhook_router(
             logger.info("Webhook de WhatsApp con forma desconocida; se ignora")
             return JSONResponse({"status": "ignored"})
 
+        senders: list[str] = []
         for message in extract_messages(payload, settings.phone_number_id, clock.now()):
-            # Persistir antes de procesar; `add` devuelve False si el wamid ya se recibió.
-            if store.add(message):
-                dispatcher.submit(message)
+            # Persistir antes de encolar; `add` devuelve False si el wamid ya se recibió.
+            if store.add(message) or _still_pending(store, message.external_id):
+                if message.sender not in senders:
+                    senders.append(message.sender)
             else:
                 logger.info("Mensaje duplicado %s ignorado", message.external_id)
+        # Una tarea por remitente y ventana (spec 016). Si la cola falla, el 500 hace que Meta
+        # reintente; el mensaje ya está persistido y el duplicado sin procesar se reencola.
+        for sender in senders:
+            scheduler.schedule(sender)
         return JSONResponse({"status": "ok"})
 
     return router

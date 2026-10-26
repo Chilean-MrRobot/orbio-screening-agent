@@ -164,3 +164,10 @@ class FirestoreInboundMessageStore:
     def list_unprocessed(self) -> list[InboundMessage]:
         query = self._collection.where(filter=FieldFilter("processed", "==", False))
         return [InboundMessage.model_validate(s.to_dict()) for s in query.stream()]
+
+    def list_unprocessed_for(self, sender: str) -> list[InboundMessage]:
+        # Solo igualdades: Firestore la resuelve con los índices simples, sin índice compuesto.
+        query = self._collection.where(filter=FieldFilter("sender", "==", sender)).where(
+            filter=FieldFilter("processed", "==", False)
+        )
+        return [InboundMessage.model_validate(s.to_dict()) for s in query.stream()]
