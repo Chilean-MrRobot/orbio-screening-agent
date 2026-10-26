@@ -21,6 +21,7 @@ from screening.crm.client import PASSWORD_ENV, CrmApiError, CrmClient
 from screening.crm.listing import CandidateRowPage
 from screening.crm.pagination import Pager
 from screening.crm.transitions import allowed_targets
+from screening.crm.voice_page import voice_page
 from screening.domain import Candidate, CandidateStatus, Country, Stage
 
 load_dotenv()  # en local; en Cloud Run las variables vienen del servicio
@@ -416,11 +417,12 @@ def panel_page() -> None:
         metrics_panel()
 
 
-# Dos páginas en un solo link (spec 019): el chat del candidato es público; el panel, con
+# Un solo link (specs 019 y 020): el chat y la voz del candidato son públicos; el panel, con
 # contraseña. Abiertas lado a lado se ve la ficha llenarse mientras se conversa.
 navigation = st.navigation(
     [
         st.Page(chat_page, title="Postular (candidato)", icon="💬", url_path="chat", default=True),
+        st.Page(voice_page, title="Hablar con Sofía (voz)", icon="🎙️", url_path="voz"),
         st.Page(panel_page, title="Panel (recruiter)", icon="📋", url_path="panel"),
     ]
 )

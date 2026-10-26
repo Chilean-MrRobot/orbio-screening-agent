@@ -7,6 +7,7 @@ ficha lista para el recruiter, con resumen, en un panel que se actualiza en vivo
 
 **Demo en vivo:** <https://screening-panel-tg6cgmz3wa-ew.a.run.app>
 - **Postular (candidato)**, pública: pones nombre y país y conversas con Sofía, la asistente.
+- **Hablar con Sofía (voz)**, pública: el mismo screening hablando, con ElevenLabs (spec 020).
 - **Panel (recruiter)**, con contraseña: la ficha se llena mientras conversas.
 
 > El primer mensaje tras un rato sin uso tarda ~20 s (Cloud Run escala a cero para no cobrar).
@@ -15,7 +16,7 @@ ficha lista para el recruiter, con resumen, en un panel que se actualiza en vivo
 |---|---|
 | [docs/fase1_diseno_proceso.md](docs/fase1_diseno_proceso.md) | Fase 1: diseño del proceso (etapas, personalidad, campos, casos borde) |
 | [evals/datasets/](evals/datasets) | Golden datasets: casos de conversación por capacidad (extracción, respuesta, RAG, resumen, emoción) |
-| [specs/](specs/README.md) | Una spec por feature (000–019): qué hace y cómo se prueba |
+| [specs/](specs/README.md) | Una spec por feature (000–020): qué hace y cómo se prueba |
 | [deploy/README.md](deploy/README.md) | Despliegue en GCP |
 | [evals/README.md](evals/README.md) | Pipeline de evaluación con LLM-as-a-judge |
 
