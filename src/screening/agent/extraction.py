@@ -17,6 +17,8 @@ EXTRACTABLE_FIELDS: tuple[str, ...] = tuple(
 # Convención con el orquestador (008): en `closing` se espera este campo y, si el candidato
 # confirma el resumen sin corregir nada, va en `provided_fields` (no existe en ScreeningData).
 CONFIRMATION_FIELD = "summary_confirmed"
+# Spec 021: en la etapa `scheduling` se espera este campo; la elección va en `slot_choice`.
+SLOT_FIELD = "interview_slot"
 
 
 class ExtractedExperience(BaseModel):
@@ -56,6 +58,8 @@ class ExtractionResponse(BaseModel):
     human_requested: bool
     question: str | None
     summary_confirmed: bool
+    slot_choice: int | None
+    slots_rejected: bool
 
 
 def build_outcome(
@@ -97,6 +101,9 @@ def build_outcome(
     provided = [name for name in EXTRACTABLE_FIELDS if name in values]
     if response.summary_confirmed and CONFIRMATION_FIELD in expected_fields and not values:
         provided.append(CONFIRMATION_FIELD)
+    # La elección de horario solo cuenta si se ofrecieron horarios; el rango lo valida el código.
+    scheduling = SLOT_FIELD in expected_fields
+    choice = response.slot_choice if scheduling and (response.slot_choice or 0) >= 1 else None
     return ExtractionOutcome(
         updates=updates,
         provided_fields=provided,
@@ -106,6 +113,8 @@ def build_outcome(
         opt_out=response.opt_out,
         human_requested=response.human_requested,
         question=(response.question or "").strip() or None,
+        slot_choice=choice,
+        slots_rejected=scheduling and choice is None and response.slots_rejected,
     )
 
 

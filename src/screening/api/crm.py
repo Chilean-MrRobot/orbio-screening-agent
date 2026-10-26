@@ -21,15 +21,21 @@ from screening.clock import Clock
 from screening.crm import (
     CandidateRowPage,
     CrmMetrics,
+    InterviewChangeRequest,
+    SlotOption,
+    SlotUnavailableError,
     StatusChangeRequest,
     StatusCounts,
     TransitionError,
+    apply_interview_change,
     apply_status_change,
     compute_metrics,
+    slot_options,
     to_row,
 )
 from screening.domain import Candidate, CandidateStatus, Country, Stage
 from screening.ports import CandidateQuery, CandidateRepository
+from screening.scheduling import InterviewScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +48,7 @@ MAX_PAGE_SIZE = 200
 # Fichas recientes sobre las que se calcula la analítica (los totales cuentan todas).
 DEFAULT_METRICS_WINDOW = 1000
 QUERY_MAX_LIMIT = 500  # tope de `CandidateQuery.limit`
+DEFAULT_SLOTS = 20  # horarios libres que se muestran para agendar (spec 021)
 
 PanelOrder = Literal["score_desc", "updated_desc"]
 
@@ -52,7 +59,10 @@ def build_crm_router(
     password: str,
     *,
     metrics_window: int = DEFAULT_METRICS_WINDOW,
+    scheduler: InterviewScheduler | None = None,
 ) -> APIRouter:
+    """Con `scheduler` se suman los horarios libres y agendar o cancelar (spec 021)."""
+
     def require_password(authorization: Annotated[str | None, Header()] = None) -> None:
         scheme, _, value = (authorization or "").partition(" ")
         if scheme.lower() != "bearer" or not hmac.compare_digest(value.encode(), password.encode()):
@@ -113,6 +123,26 @@ def build_crm_router(
         logger.info("Recruiter movió %s a %s", candidate.id, candidate.status)
         return candidate.model_dump(mode="json")
 
+    if scheduler is not None:
+
+        @router.get("/candidates/{candidate_id}/slots")
+        def free_slots(
+            candidate_id: str,
+            limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_SLOTS,
+        ) -> list[SlotOption]:
+            return slot_options(load(candidate_id), scheduler, limit)
+
+        @router.post("/candidates/{candidate_id}/interview")
+        def change_interview(candidate_id: str, request: InterviewChangeRequest) -> dict[str, Any]:
+            candidate = load(candidate_id)
+            try:
+                apply_interview_change(candidate, request, scheduler, clock.now())
+            except (TransitionError, SlotUnavailableError) as e:
+                raise HTTPException(status_code=409, detail=str(e)) from e
+            repository.save(candidate)
+            logger.info("Recruiter cambió la entrevista de %s (%s)", candidate.id, request.action)
+            return candidate.model_dump(mode="json")
+
     @router.get("/counts")
     def counts() -> StatusCounts:
         by_status = repository.count_by_status()
@@ -134,7 +164,11 @@ def build_crm_router(
 
 
 def build_crm_router_from_env(
-    repository: CandidateRepository, clock: Clock, env: Mapping[str, str] = os.environ
+    repository: CandidateRepository,
+    clock: Clock,
+    env: Mapping[str, str] = os.environ,
+    *,
+    scheduler: InterviewScheduler | None = None,
 ) -> APIRouter | None:
     """Sin `PANEL_PASSWORD` no se expone el panel: la ficha tiene datos personales."""
     password = env.get(PASSWORD_ENV)
@@ -144,4 +178,4 @@ def build_crm_router_from_env(
     window = int(env.get(METRICS_WINDOW_ENV) or DEFAULT_METRICS_WINDOW)
     if window < 1:
         raise ValueError(f"{METRICS_WINDOW_ENV} debe ser mayor que 0")
-    return build_crm_router(repository, clock, password, metrics_window=window)
+    return build_crm_router(repository, clock, password, metrics_window=window, scheduler=scheduler)

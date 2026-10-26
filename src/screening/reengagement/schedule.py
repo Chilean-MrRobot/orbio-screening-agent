@@ -12,6 +12,7 @@ from screening.config import AppConfig
 from screening.config.models import BusinessHours, Cadence
 from screening.domain import Candidate, CandidateStatus, MessageRole
 from screening.reengagement.hours import next_opening
+from screening.scheduling import awaiting_choice
 
 NEVER_RESPONDED = "never_responded"
 ABANDONED = "abandoned_mid_screening"
@@ -41,20 +42,28 @@ def refresh_next_touch(candidate: Candidate, config: AppConfig) -> None:
 
 
 def cadence_for(candidate: Candidate, config: AppConfig) -> Cadence | None:
+    waiting = awaiting_choice(candidate)  # spec 021: calificado eligiendo horario
     if (
-        candidate.status not in ELIGIBLE_STATUSES
+        (candidate.status not in ELIGIBLE_STATUSES and not waiting)
         or candidate.human_requested
         or candidate.phone is None
     ):
         return None
     conversation = [m for m in candidate.messages if m.role != MessageRole.SYSTEM]
-    if candidate.status == CandidateStatus.IN_SCREENING:
+    if candidate.status == CandidateStatus.IN_SCREENING or waiting:
         if conversation and conversation[-1].role == MessageRole.AGENT:
             return _cadence(config, ABANDONED)
         return None
     if any(m.role == MessageRole.CANDIDATE for m in conversation):
         return None
     return _cadence(config, NEVER_RESPONDED)
+
+
+def step_template(candidate: Candidate, step_template: str, config: AppConfig) -> str:
+    """Esperando la elección de horario (spec 021), los textos del agendamiento."""
+    if config.scheduling is None or not awaiting_choice(candidate):
+        return step_template
+    return config.scheduling.reengagement_templates.get(step_template, step_template)
 
 
 def business_hours_for(candidate: Candidate, config: AppConfig) -> BusinessHours | None:

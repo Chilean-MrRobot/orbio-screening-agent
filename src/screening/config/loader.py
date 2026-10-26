@@ -55,6 +55,10 @@ def load_config(config_dir: Path | str | None = None) -> AppConfig:
         "cadences": _read_yaml(base / "cadences.yaml"),
         "templates": _section(base / "templates.yaml", "templates"),
     }
+    # Opcional (spec 021): sin el archivo, el agendamiento queda desactivado.
+    scheduling_path = base / "scheduling.yaml"
+    if scheduling_path.exists():
+        raw["scheduling"] = _section(scheduling_path, "scheduling")
     try:
         return AppConfig.model_validate(raw)
     except ValidationError as e:

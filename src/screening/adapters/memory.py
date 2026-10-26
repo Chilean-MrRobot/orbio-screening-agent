@@ -87,3 +87,40 @@ class InMemoryLeaseStore:
             current = self._leases.get(key)
             if current is not None and current[0] == owner:
                 del self._leases[key]
+
+
+class InMemoryInterviewSlotStore:
+    """`InterviewSlotStore` de un solo proceso (spec 021): correcto en tests y con una instancia."""
+
+    def __init__(self) -> None:
+        self._slots: dict[str, tuple[str, datetime]] = {}
+        self._guard = threading.Lock()
+
+    def try_reserve(
+        self, slot_id: str, candidate_id: str, *, start: datetime, now: datetime
+    ) -> bool:
+        with self._guard:
+            current = self._slots.get(slot_id)
+            if current is not None:
+                return current[0] == candidate_id
+            self._slots[slot_id] = (candidate_id, start)
+            return True
+
+    def release(self, slot_id: str, candidate_id: str) -> None:
+        with self._guard:
+            current = self._slots.get(slot_id)
+            if current is not None and current[0] == candidate_id:
+                del self._slots[slot_id]
+
+    def reserved_between(self, scope: str, start: datetime, end: datetime) -> set[str]:
+        with self._guard:
+            return {
+                slot_id
+                for slot_id, (_, at) in self._slots.items()
+                if slot_id.startswith(f"{scope}_") and start <= at < end
+            }
+
+    def owner(self, slot_id: str) -> str | None:
+        """Solo para tests: de quién es la reserva."""
+        current = self._slots.get(slot_id)
+        return current[0] if current else None

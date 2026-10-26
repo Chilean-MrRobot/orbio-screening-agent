@@ -4,10 +4,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from screening.crm.listing import CandidateRow
 from screening.crm.metrics import CrmMetrics
-from screening.domain import Candidate, CandidateStatus, MessageRole, Stage, TimelineEvent
+from screening.domain import (
+    Candidate,
+    CandidateStatus,
+    InterviewModality,
+    InterviewSlot,
+    Language,
+    MessageRole,
+    Stage,
+    TimelineEvent,
+)
+from screening.scheduling import format_slot
 
 STATUS_LABELS: dict[CandidateStatus, str] = {
     CandidateStatus.NEW: "Nuevo",
@@ -53,8 +64,25 @@ STAGE_LABELS: dict[Stage, str] = {
     Stage.KNOCKOUT: "Requisitos",
     Stage.PROFILE: "Perfil",
     Stage.CLOSING: "Cierre",
+    Stage.SCHEDULING: "Agendamiento",
     Stage.DONE: "Terminada",
 }
+
+MODALITY_LABELS: dict[InterviewModality, str] = {
+    InterviewModality.VIDEO: "Videollamada",
+    InterviewModality.IN_PERSON: "Presencial",
+}
+
+# Por qué la entrevista quedó para agendar a mano (spec 021).
+MANUAL_REASON_LABELS: dict[str, str] = {
+    "declined_options": "Ninguno de los horarios ofrecidos le sirvió",
+    "no_slots": "No había horarios libres",
+    "no_response": "No respondió a la oferta de horarios",
+    "human_requested": "Pidió hablar con una persona",
+    "cancelled": "El recruiter canceló la entrevista",
+}
+
+SHORT_WEEKDAYS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
 
 ACTION_LABELS: dict[CandidateStatus, str] = {
     CandidateStatus.INTERVIEW: "Pasar a entrevista",
@@ -107,6 +135,13 @@ EVENT_LABELS: dict[str, str] = {
     "orchestrator_error": "Error del orquestador",
     "message_after_close": "Mensaje tras el cierre",
     "recruiter_action": "Acción del recruiter",
+    "interview_offered": "Horarios ofrecidos",
+    "interview_booked": "Entrevista agendada",
+    "interview_rescheduled": "Entrevista reagendada",
+    "interview_cancelled": "Entrevista cancelada",
+    "interview_slot_taken": "Horario ya ocupado",
+    "interview_declined": "Rechazó los horarios",
+    "interview_manual_required": "Agendar a mano",
 }
 
 ROLE_AVATARS: dict[MessageRole, str] = {
@@ -139,10 +174,47 @@ def table_records(rows: list[CandidateRow]) -> list[dict[str, Any]]:
             "Último mensaje": _last_message(row),
             "Humano": "🙋 Sí" if row.human_requested else "",
             "Motivo": reason_label(row.disqualification_reason),
+            "Entrevista": interview_cell(row),
             "Actualizado": format_time(row.updated_at),
         }
         for row in rows
     ]
+
+
+def interview_cell(row: CandidateRow) -> str:
+    """`mar 27/10 10:00 · Videollamada` en hora local, o el aviso de agendar a mano."""
+    if row.interview_start is not None and row.interview_timezone:
+        local = row.interview_start.astimezone(ZoneInfo(row.interview_timezone))
+        when = f"{SHORT_WEEKDAYS[local.weekday()]} {local:%d/%m %H:%M}"
+        modality = MODALITY_LABELS[row.interview_modality] if row.interview_modality else ""
+        return f"{when} · {modality}" if modality else when
+    return "📅 Agendar a mano" if row.scheduling_manual else ""
+
+
+def interview_details(candidate: Candidate) -> list[dict[str, str]]:
+    """Filas de la entrevista agendada para la ficha; vacía si no hay entrevista."""
+    interview = candidate.interview
+    if interview is None:
+        return []
+    slot = InterviewSlot(start=interview.start, end=interview.end)
+    rows = [
+        {"Campo": "Fecha y hora", "Valor": format_slot(slot, interview.timezone, Language.ES)},
+        {"Campo": "Zona horaria", "Valor": interview.timezone},
+        {"Campo": "Modalidad", "Valor": MODALITY_LABELS[interview.modality]},
+    ]
+    if interview.location:
+        rows.append({"Campo": "Lugar", "Valor": interview.location})
+    booked_by = "Sofía (agente)" if interview.booked_by == "agent" else interview.booked_by
+    rows.append({"Campo": "Agendada por", "Valor": booked_by})
+    return rows
+
+
+def manual_scheduling_note(candidate: Candidate) -> str | None:
+    state = candidate.scheduling
+    if candidate.interview is not None or not state.manual_required:
+        return None
+    reason = MANUAL_REASON_LABELS.get(state.manual_reason or "", state.manual_reason or "")
+    return f"📅 Agendar la entrevista a mano: {reason}." if reason else "📅 Agendar a mano."
 
 
 def chat_messages(candidate: Candidate) -> list[dict[str, str]]:
@@ -227,6 +299,12 @@ def describe_event(event: TimelineEvent) -> str:
             return f"{who}: {_status(d.get('status'))}{reason}"
         case "question_received":
             return str(d.get("question"))
+        case "interview_booked" | "interview_rescheduled" | "interview_cancelled":
+            who = d.get("booked_by") or d.get("recruiter")
+            text = format_value(d.get("start") or "")
+            return f"{text} · {'Sofía' if who == 'agent' else who}" if who else text
+        case "interview_manual_required":
+            return MANUAL_REASON_LABELS.get(d.get("reason", ""), str(d.get("reason")))
         case _:
             return ", ".join(f"{k}={v}" for k, v in d.items() if v not in (None, [], ""))
 

@@ -95,6 +95,31 @@ def test_extraction_target_builds_candidate_from_input(app_config, agents) -> No
     assert output.usage.cost_usd == pytest.approx(0.002)
 
 
+def test_extraction_target_carries_the_offered_slots(app_config, agents) -> None:
+    """Spec 021: los horarios ofrecidos llegan a la ficha y la respuesta muestra la elección."""
+    case = next(c for c in load_suite("extraction") if c.id == "ex-sch-01-el-segundo")
+    target = extraction.make_target(FakeLLMClient(), app_config, factory(agents))
+
+    output = target(case)
+
+    [agent] = agents
+    candidate, _, expected_fields = agent.extract_calls[0]
+    assert candidate.stage == Stage.SCHEDULING
+    assert expected_fields == ["interview_slot"]
+    offered = candidate.scheduling.offered
+    assert offered[1].start == datetime(2026, 10, 27, 9, 0, tzinfo=UTC)
+    assert (offered[0].end - offered[0].start).total_seconds() == 30 * 60
+    answer = json.loads(output.answer)
+    assert answer["slot_choice"] is None and answer["slots_rejected"] is False
+
+
+def test_extraction_answer_hides_slot_fields_outside_scheduling(app_config, agents) -> None:
+    case = next(c for c in load_suite("extraction") if c.id == "ex-20-correccion")
+    target = extraction.make_target(FakeLLMClient(), app_config, factory(agents))
+
+    assert "slot_choice" not in json.loads(target(case).answer)
+
+
 def test_reply_target_builds_request_and_faq(app_config, agents) -> None:
     case = next(c for c in load_suite("reply") if c.id == "rp-05-faq-propinas")
     target = reply.make_target(FakeLLMClient(), app_config, factory(agents))

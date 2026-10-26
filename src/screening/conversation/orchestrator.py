@@ -16,10 +16,11 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-from screening.adapters.memory import InMemoryLeaseStore
+from screening.adapters.memory import InMemoryInterviewSlotStore, InMemoryLeaseStore
 from screening.channels import CandidateBusyError, InboundBatch
 from screening.clock import Clock
 from screening.config import AppConfig
+from screening.conversation.interviews import confirmation_variables, offer_variables
 from screening.conversation.messages import render_template
 from screening.conversation.stages import CONFIRMATION_FIELD, current_stage, missing_fields
 from screening.conversation.tracing import trace_turn
@@ -29,6 +30,7 @@ from screening.domain import (
     Candidate,
     CandidateStatus,
     Country,
+    InterviewSlot,
     Message,
     MessageRole,
     ReengagementState,
@@ -48,6 +50,13 @@ from screening.ports import (
 )
 from screening.reengagement.schedule import refresh_next_touch
 from screening.rules import KnockoutEvaluation, SpecialConditionRegistry, evaluate_knockouts
+from screening.scheduling import (
+    AGENT_BOOKER,
+    SLOT_FIELD,
+    InterviewScheduler,
+    awaiting_choice,
+    mark_manual,
+)
 from screening.scoring import compute_score
 
 logger = logging.getLogger(__name__)
@@ -107,7 +116,9 @@ class ConversationOrchestrator:
         summarizer: Summarizer | None = None,
         leases: LeaseStore | None = None,
         lease_ttl: timedelta = DEFAULT_LEASE_TTL,
+        scheduler: InterviewScheduler | None = None,
     ) -> None:
+        """Sin `scheduler`, uno con reservas en memoria (una instancia), como los leases."""
         self._repository = repository
         self._agent = agent
         self._channel = channel
@@ -117,6 +128,9 @@ class ConversationOrchestrator:
         self._summarizer = summarizer
         self._leases = leases if leases is not None else InMemoryLeaseStore()
         self._lease_ttl = lease_ttl
+        self._scheduler = scheduler or InterviewScheduler(
+            config, InMemoryInterviewSlotStore(), clock
+        )
 
     # --- Primer contacto ---------------------------------------------------------
 
@@ -199,6 +213,9 @@ class ConversationOrchestrator:
 
     def _converse(self, candidate: Candidate, new: list[Message]) -> None:
         if candidate.status == CandidateStatus.OPTED_OUT:
+            return
+        if awaiting_choice(candidate):
+            self._scheduling_turn(candidate, new)
             return
         if candidate.status not in OPEN_STATUSES:
             candidate.record_event(self._clock.now(), "message_after_close")
@@ -371,12 +388,129 @@ class ConversationOrchestrator:
             total=candidate.score.total,
             components=candidate.score.components,
         )
-        candidate.set_stage(Stage.DONE, now)
         candidate.set_status(CandidateStatus.QUALIFIED, now)
+        # Spec 021: con agendamiento, en vez de terminar se ofrecen horarios de entrevista.
+        if self._scheduler.enabled_for(candidate):
+            options = self._scheduler.options(candidate)
+            if options:
+                candidate.set_stage(Stage.SCHEDULING, now)
+                self._offer(candidate, options, "interview_offer")
+                self._summarize(candidate)
+                return
+            mark_manual(candidate, "no_slots", now)
+        candidate.set_stage(Stage.DONE, now)
         self._repository.save(candidate)
         template = "qualified_next_steps"
         self._send(candidate, render_template(template, candidate, self._config), template)
         self._summarize(candidate)
+
+    # --- Agendamiento (spec 021) ---------------------------------------------------
+
+    def _scheduling_turn(self, candidate: Candidate, new: list[Message]) -> None:
+        """El candidato responde a la oferta de horarios: el código reserva, el LLM entiende."""
+        try:
+            outcome = self._agent.extract(candidate, new, [SLOT_FIELD])
+        except Exception as exc:
+            self._agent_failed(candidate, "extract", exc)
+            return
+
+        now = self._clock.now()
+        record_usage(candidate, now, "extract", outcome.usage)
+        if outcome.language != candidate.language:
+            candidate.record_event(
+                now, "language_changed", previous=candidate.language, new=outcome.language
+            )
+            candidate.language = outcome.language
+        candidate.sentiment = outcome.sentiment
+
+        if outcome.opt_out:
+            candidate.scheduling.offered = []
+            candidate.set_stage(Stage.DONE, now)
+            candidate.set_status(CandidateStatus.OPTED_OUT, now, reason="opt_out")
+            self._repository.save(candidate)
+            return
+        if outcome.human_requested:
+            candidate.human_requested = True
+            candidate.record_event(now, "human_requested")
+            mark_manual(candidate, "human_requested", now)
+            self._repository.save(candidate)
+            template = "human_handoff"
+            self._send(candidate, render_template(template, candidate, self._config), template)
+            return
+
+        offered = candidate.scheduling.offered
+        choice = outcome.slot_choice
+        if choice is not None and 1 <= choice <= len(offered):
+            self._book(candidate, offered[choice - 1])
+        elif outcome.slots_rejected:
+            self._decline(candidate)
+        elif outcome.question:
+            candidate.record_event(now, "question_received", question=outcome.question)
+            self._reply(candidate, Stage.SCHEDULING, None, [], outcome.question)
+        else:
+            self._offer(candidate, offered, "interview_offer_retry")
+
+    def _book(self, candidate: Candidate, slot: InterviewSlot) -> None:
+        now = self._clock.now()
+        interview = self._scheduler.book(candidate, slot, booked_by=AGENT_BOOKER)
+        if interview is None:
+            candidate.record_event(now, "interview_slot_taken", start=slot.start.isoformat())
+            self._offer_again(candidate, "interview_slot_taken")
+            return
+        candidate.scheduling.offered = []
+        candidate.scheduling.manual_required = False
+        candidate.scheduling.manual_reason = None
+        candidate.record_event(
+            now,
+            "interview_booked",
+            start=interview.start.isoformat(),
+            slot_id=interview.slot_id,
+            booked_by=interview.booked_by,
+        )
+        candidate.set_stage(Stage.DONE, now)
+        candidate.set_status(CandidateStatus.INTERVIEW, now, reason="interview_booked")
+        self._repository.save(candidate)
+        template = "interview_confirmed"
+        extra = confirmation_variables(self._scheduler, candidate, self._config, interview)
+        self._send(candidate, render_template(template, candidate, self._config, extra), template)
+
+    def _decline(self, candidate: Candidate) -> None:
+        now = self._clock.now()
+        state = candidate.scheduling
+        state.declined.extend(state.offered)
+        state.rejections += 1
+        candidate.record_event(now, "interview_declined", rejections=state.rejections)
+        settings = self._scheduler.settings
+        if settings is not None and state.rejections < settings.max_rejections:
+            self._offer_again(candidate, "interview_offer_more")
+            return
+        self._manual(candidate, "declined_options")
+
+    def _offer_again(self, candidate: Candidate, template: str) -> None:
+        options = self._scheduler.options(candidate)
+        if not options:
+            self._manual(candidate, "no_slots")
+            return
+        self._offer(candidate, options, template)
+
+    def _offer(self, candidate: Candidate, options: list[InterviewSlot], template: str) -> None:
+        now = self._clock.now()
+        candidate.scheduling.offered = list(options)
+        candidate.record_event(
+            now,
+            "interview_offered",
+            template=template,
+            slots=[s.start.isoformat() for s in options],
+        )
+        self._repository.save(candidate)
+        extra = offer_variables(self._scheduler, candidate, self._config, options)
+        self._send(candidate, render_template(template, candidate, self._config, extra), template)
+
+    def _manual(self, candidate: Candidate, reason: str) -> None:
+        mark_manual(candidate, reason, self._clock.now())
+        self._repository.save(candidate)
+        template = "interview_manual"
+        self._send(candidate, render_template(template, candidate, self._config), template)
 
     def _summarize(self, candidate: Candidate) -> None:
         """Después del mensaje final, para que el candidato no espere; nunca bloquea el cierre."""
@@ -407,6 +541,11 @@ class ConversationOrchestrator:
             retry_fields=retry,
             question=question,
             closing_summary=closing,
+            interview_options=(
+                self._scheduler.option_lines(candidate, candidate.scheduling.offered)
+                if stage == Stage.SCHEDULING
+                else []
+            ),
         )
         try:
             reply = self._agent.reply(request)

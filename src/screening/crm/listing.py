@@ -11,6 +11,7 @@ from screening.domain import (
     Candidate,
     CandidateStatus,
     Country,
+    InterviewModality,
     MessageRole,
     Sentiment,
     Stage,
@@ -37,6 +38,11 @@ class CandidateRow(BaseModel):
     sentiment: Sentiment = Sentiment.NEUTRAL
     needs_review: list[str] = Field(default_factory=list)
     last_message: LastMessage | None = None
+    # Spec 021: la entrevista agendada (hora en UTC + zona para mostrarla) o agendar a mano.
+    interview_start: datetime | None = None
+    interview_timezone: str | None = None
+    interview_modality: InterviewModality | None = None
+    scheduling_manual: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -51,6 +57,7 @@ class CandidateRowPage(BaseModel):
 def to_row(candidate: Candidate) -> CandidateRow:
     last = candidate.messages[-1] if candidate.messages else None
     knockout = candidate.knockout
+    interview = candidate.interview
     return CandidateRow(
         id=candidate.id,
         name=candidate.data.full_name or candidate.application.full_name,
@@ -67,6 +74,10 @@ def to_row(candidate: Candidate) -> CandidateRow:
         last_message=LastMessage(role=last.role, text=last.text, at=last.created_at)
         if last
         else None,
+        interview_start=interview.start if interview else None,
+        interview_timezone=interview.timezone if interview else None,
+        interview_modality=interview.modality if interview else None,
+        scheduling_manual=candidate.scheduling.manual_required,
         created_at=candidate.created_at,
         updated_at=candidate.updated_at,
     )

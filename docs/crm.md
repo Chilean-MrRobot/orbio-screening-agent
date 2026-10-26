@@ -3,8 +3,8 @@
 Nuestro propio panel para recruiters (en el código, "CRM"), hecho en Streamlit, para que
 sigan a los candidatos en vivo: tabla paginada que se refresca sola, ficha con la
 conversación, los datos extraídos (y el JSON crudo), las reglas eliminatorias, el desglose
-del puntaje, el resumen y el `timeline`, botones para mover el estado y un panel de
-métricas. Diseño en [`specs/013-crm.md`](../specs/013-crm.md) y
+del puntaje, el resumen y el `timeline`, botones para mover el estado, la entrevista
+agendada (con reagendar y cancelar) y un panel de métricas. Diseño en [`specs/013-crm.md`](../specs/013-crm.md) y
 [`specs/018-panel-escalable.md`](../specs/018-panel-escalable.md) (paginación y contraseña
 única).
 
@@ -38,6 +38,22 @@ del proceso de la API.
   cuántas se calculó. El camino a métricas exactas (contadores agregados al guardar o
   export a BigQuery) está en la spec 018.
 
+## Entrevistas
+
+Al calificar, Sofía ofrece 3 horarios de `config/scheduling.yaml` y el candidato elige por
+chat ([`specs/021-agendamiento.md`](../specs/021-agendamiento.md)). En el panel:
+
+- **Tabla:** columna *Entrevista* con la fecha y hora local y la modalidad, o
+  "📅 Agendar a mano" si el candidato rechazó dos veces los horarios, no respondió, pidió una
+  persona o no había horarios libres.
+- **Ficha:** bloque *Entrevista* con fecha, hora, zona horaria, modalidad y lugar. **Agendar /
+  Reagendar** lista los próximos horarios libres (`GET /crm/candidates/{id}/slots`) y
+  **Cancelar** libera el horario (`POST /crm/candidates/{id}/interview`). La reserva es un
+  documento por horario en la colección `interview_slots`: dos recruiters o el agente no
+  pueden tomar el mismo horario.
+- El candidato no recibe aviso automático al reagendar o cancelar desde el panel (siguiente
+  paso de la spec 021): el recruiter le escribe.
+
 ## En local, con datos de demo (sin LLM ni WhatsApp)
 
 La API de demo usa el flujo real (intake, orquestador, reglas, puntaje y `timeline`) con un
@@ -65,7 +81,8 @@ agente guionado y el canal de consola. Trae valores por defecto para el demo loc
 ```
 
 Abrir `http://localhost:8501` y entrar con la contraseña. Los escenarios cubren calificados
-(con puntajes distintos, uno en entrevista y uno contratado), un descarte por cada regla
+(con puntajes distintos, uno que agendó su entrevista por chat, uno para agendar a mano y
+uno contratado), un descarte por cada regla
 eliminatoria, uno en curso, uno contactado sin respuesta, uno que pidió hablar con una
 persona y uno con datos inválidos, en España y México.
 

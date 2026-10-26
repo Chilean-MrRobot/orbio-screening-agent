@@ -95,6 +95,7 @@ def test_drop_off_by_stage_counts_closed_and_stale_conversations() -> None:
         Stage.KNOCKOUT: 1,
         Stage.PROFILE: 1,
         Stage.CLOSING: 0,
+        Stage.SCHEDULING: 0,
         Stage.DONE: 0,
     }
 
