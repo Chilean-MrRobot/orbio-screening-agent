@@ -187,7 +187,10 @@ class AdkScreeningAgent:
             response, usage = self._with_retry(attempt, _parse_extraction)
             mood = sentiment.result() if sentiment else SentimentResult(label=None)
         outcome = build_outcome(
-            response, licenses=list(region.licenses), expected_fields=expected_fields
+            response,
+            licenses=list(region.licenses),
+            expected_fields=expected_fields,
+            current=candidate.data,
         )
         if mood.label is not None:  # sin etiqueta confiable queda la heurística de la extracción
             outcome.sentiment = mood.label

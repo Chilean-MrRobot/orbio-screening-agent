@@ -13,6 +13,7 @@ from screening.domain import (
     Language,
     Message,
     MessageRole,
+    ScreeningData,
     Sentiment,
     VehicleType,
 )
@@ -162,6 +163,37 @@ def test_summary_confirmation_is_a_provided_field_when_expected() -> None:
 def test_summary_confirmation_is_ignored_when_not_expected_or_with_corrections() -> None:
     assert confirmed(["city"]).provided_fields == []
     assert confirmed([CONFIRMATION_FIELD], city="Sevilla").provided_fields == ["city"]
+
+
+def test_repeated_unchanged_fields_do_not_cancel_the_confirmation() -> None:
+    """Regresión (prueba de punta a punta): al confirmar, el modelo repitió datos del resumen."""
+    current = ScreeningData(city="Madrid", license_type="B", has_license=True)
+    raw = llm_output(city="Madrid", license_type="b", has_license=True) | {
+        "summary_confirmed": True
+    }
+
+    outcome = build_outcome(
+        ExtractionResponse.model_validate(raw),
+        licenses=ES_LICENSES,
+        expected_fields=[CONFIRMATION_FIELD],
+        current=current,
+    )
+
+    assert outcome.provided_fields == [CONFIRMATION_FIELD]
+    assert outcome.updates == ScreeningData()
+
+
+def test_changed_field_is_still_a_correction_with_current_data() -> None:
+    current = ScreeningData(city="Madrid", has_license=True)
+    raw = llm_output(city="Sevilla", has_license=True) | {"summary_confirmed": True}
+
+    outcome = build_outcome(
+        ExtractionResponse.model_validate(raw),
+        expected_fields=[CONFIRMATION_FIELD],
+        current=current,
+    )
+
+    assert outcome.provided_fields == ["city"]
 
 
 # --- Turno de extracción con ADK ----------------------------------------------------

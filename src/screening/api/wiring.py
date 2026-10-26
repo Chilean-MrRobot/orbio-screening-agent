@@ -144,5 +144,9 @@ def build_lease_store(env: Mapping[str, str] = os.environ) -> LeaseStore:
 def _firestore_client(env: Mapping[str, str]) -> firestore.Client:
     from google.cloud import firestore
 
+    # Con `FIRESTORE_EMULATOR_HOST=` vacío (típico de un .env copiado de .env.example) la
+    # librería intenta conectarse a un emulador en '' y falla: vacío cuenta como ausente.
+    if not os.environ.get("FIRESTORE_EMULATOR_HOST", "x").strip():
+        os.environ.pop("FIRESTORE_EMULATOR_HOST")
     options = {"project": env.get("FIRESTORE_PROJECT"), "database": env.get("FIRESTORE_DATABASE")}
     return firestore.Client(**{k: v for k, v in options.items() if v})

@@ -63,11 +63,14 @@ def build_outcome(
     *,
     licenses: Collection[str] | None = None,
     expected_fields: Collection[str] = (),
+    current: ScreeningData | None = None,
 ) -> ExtractionOutcome:
     """Valida campo por campo: lo que no valida pasa a `invalid_fields` en vez de fallar todo.
 
     `licenses` son los tipos válidos del país; un `license_type` fuera de la tabla es inválido.
-    La confirmación del resumen solo cuenta si se esperaba y no vino con correcciones.
+    Un campo con el mismo valor que ya tiene la ficha (`current`) no es una corrección: el
+    modelo a veces repite datos del resumen al leer "sí, todo correcto". La confirmación del
+    resumen solo cuenta si se esperaba y no vino con correcciones reales.
     """
     invalid = {name for name in response.invalid_fields if name in EXTRACTABLE_FIELDS}
     values: dict[str, Any] = {}
@@ -82,10 +85,12 @@ def build_outcome(
                 invalid.add(name)
                 continue
         try:
-            ScreeningData.model_validate({name: value})
+            parsed = ScreeningData.model_validate({name: value})
         except ValidationError:
             invalid.add(name)
             continue
+        if current is not None and getattr(parsed, name) == getattr(current, name):
+            continue  # repite lo que ya está en la ficha: no es un dato nuevo ni una corrección
         values[name] = value
 
     updates = ScreeningData.model_validate(values)

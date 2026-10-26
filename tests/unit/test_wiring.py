@@ -83,6 +83,20 @@ def test_firestore_lease_store_with_firestore_repository(
     assert isinstance(store, FirestoreLeaseStore)
 
 
+def test_empty_emulator_host_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regresión: `FIRESTORE_EMULATOR_HOST=` vacío en .env apuntaba el cliente a ''."""
+    import os
+
+    from google.cloud import firestore
+
+    monkeypatch.setenv("FIRESTORE_EMULATOR_HOST", "")
+    monkeypatch.setattr(firestore, "Client", lambda **options: FakeFirestoreClient())
+
+    build_lease_store({"SCREENING_REPOSITORY": "firestore"})
+
+    assert "FIRESTORE_EMULATOR_HOST" not in os.environ
+
+
 def test_unknown_lease_backend_fails() -> None:
     with pytest.raises(ValueError, match="SCREENING_REPOSITORY"):
         build_lease_store({"SCREENING_REPOSITORY": "postgres"})
