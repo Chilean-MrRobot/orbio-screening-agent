@@ -18,7 +18,7 @@ ficha lista para el recruiter, con resumen, en un panel que se actualiza en vivo
 | [docs/conversaciones_ejemplo.md](docs/conversaciones_ejemplo.md) | 7 conversaciones reales: calificada, descartes, cambio a inglés, opt-out, frustración, ambigüedad |
 | [docs/integracion_ats.md](docs/integracion_ats.md) | Diseño de la integración con un ATS (bonus de diseño) |
 | [evals/datasets/](evals/datasets) | Golden datasets: casos de conversación por capacidad (extracción, respuesta, RAG, resumen, emoción) |
-| [specs/](specs/README.md) | Una spec por feature (000–020): qué hace y cómo se prueba |
+| [specs/](specs/README.md) | Una spec por feature (000–021): qué hace y cómo se prueba |
 | [deploy/README.md](deploy/README.md) | Despliegue en GCP |
 | [evals/README.md](evals/README.md) | Pipeline de evaluación con LLM-as-a-judge |
 
@@ -62,10 +62,11 @@ El recruiter solo interviene donde aporta: entrevistar y contratar.
 | Analítica | ✅ Completitud, abandono por etapa, motivos de descarte, duración, costo por candidato |
 | Re-engagement | ✅ Cadencias en YAML (nunca respondió / abandonó a mitad), horario hábil por país, cancelación al responder |
 | RAG sobre FAQ | ✅ Embeddings + umbral: si la respuesta no está en la FAQ, Sofía dice que lo consulta |
-| Tests y evals | ✅ 845 tests unitarios + 6 suites con golden dataset y LLM-as-a-judge |
-| Diseño de despliegue | ✅ Desplegado en Cloud Run, Firestore, Secret Manager, Scheduler y Cloud Tasks |
+| **Agente de voz en el navegador** (tier "Great") | ✅ ElevenLabs Speech-to-Text + Text-to-Speech sobre el mismo orquestador (spec 020). La llamada telefónica saliente queda diseñada como siguiente paso |
+| Agendamiento de entrevistas | ✅ Al calificar, ofrece 3 horarios en la zona horaria del candidato y reserva el elegido de forma atómica; el recruiter reagenda o cancela desde el panel (spec 021) |
+| Tests y evals | ✅ 955 tests unitarios + 6 suites con golden dataset y LLM-as-a-judge |
+| Diseño de despliegue | ✅ Desplegado en Cloud Run, Firestore, Secret Manager, Scheduler y Cloud Tasks; trazas en LangSmith agrupadas por conversación |
 | Diseño de integración con ATS | ✅ [docs/integracion_ats.md](docs/integracion_ats.md) |
-| Agente de voz en el navegador · agendamiento de entrevistas | 🚧 En integración (specs 020 y 021) |
 
 ## 3. Arquitectura
 
@@ -73,6 +74,7 @@ El recruiter solo interviene donde aporta: entrevistar y contratar.
 flowchart LR
     subgraph Canales
         W[Chat web<br/>Streamlit]
+        V[Voz en el navegador<br/>ElevenLabs STT/TTS]
         WA[WhatsApp<br/>webhook]
         P[Portal de empleo<br/>JSON]
     end
@@ -84,12 +86,14 @@ flowchart LR
         K["RAG · FAQ"]
         E["Clasificador<br/>de emoción"]
         SU["Resumen"]
+        AG["Agendamiento<br/>(YAML + reserva atómica)"]
     end
     DB[(Firestore)]
     PN[Panel de recruiters<br/>Streamlit]
     SCH[Cloud Scheduler] -->|cada 15 min| RE[Calentamiento]
 
     W --> O
+    V --> O
     WA -->|Cloud Tasks| O
     P --> O
     O --> A
@@ -98,14 +102,16 @@ flowchart LR
     O --> R
     O --> S
     O --> SU
+    O --> AG
     O <--> DB
     RE <--> DB
     PN -->|API con contraseña| DB
 ```
 
 **Un turno de conversación:**
-1. Llega el mensaje (chat web, o WhatsApp vía webhook → Cloud Tasks, que agrupa mensajes
-   seguidos del mismo candidato).
+1. Llega el mensaje: por chat web, por voz (ElevenLabs lo transcribe y después le pone voz a
+   la respuesta) o por WhatsApp (webhook → Cloud Tasks, que agrupa mensajes seguidos del mismo
+   candidato). El orquestador es el mismo para los tres.
 2. El orquestador toma un **lease** por candidato en Firestore (dos instancias nunca procesan
    al mismo candidato a la vez).
 3. **Turno de extracción** (LLM): normaliza lo que dijo ("tengo el carnet de coche hace 5
@@ -116,7 +122,8 @@ flowchart LR
 5. **Turno de respuesta** (LLM, con el RAG como tool): Sofía redacta 1–3 líneas con una sola
    pregunta, en el idioma y el vocabulario del candidato, siguiendo lo que el orquestador
    decidió preguntar.
-6. En el cierre: resumen para confirmar → puntaje → `qualified` → resumen para el recruiter.
+6. En el cierre: resumen para confirmar → puntaje → `qualified` → Sofía ofrece 3 horarios de
+   entrevista → reserva el elegido (`interview`) → resumen para el recruiter.
 7. Cada paso queda en la ficha y en su `timeline`: el panel lo ve en vivo.
 
 ```
@@ -132,12 +139,13 @@ src/screening/
   knowledge/     RAG sobre la FAQ
   summary/       Resumen post-conversación
   reengagement/  Calentamiento por índice next_touch_at
+  scheduling/    Horarios de entrevista y reserva atómica
   channels/      WhatsApp, chat web, SMS simulado, consola
   tasks/         Cola de tareas (Cloud Tasks / local)
-  api/           FastAPI: chat, webhook, postulaciones, tareas, API del panel
-  adapters/      Firestore, memoria, OpenAI
-  crm/           Streamlit: chat público + panel
-config/          Reglas, puntaje, cadencias, regiones y plantillas (YAML)
+  api/           FastAPI: chat, voz, webhook, postulaciones, tareas, API del panel
+  adapters/      Firestore, memoria, OpenAI, ElevenLabs
+  crm/           Streamlit: chat y voz públicos + panel
+config/          Reglas, puntaje, cadencias, agendamiento, regiones y plantillas (YAML)
 prompts/         Prompts versionados
 knowledge/       FAQ (ficticia) e índice de embeddings
 evals/           Golden datasets, juez y métricas
@@ -189,13 +197,13 @@ latencia y costo.
 
 ## 5. Calidad
 
-- **845 tests unitarios** sin red ni LLM (fakes en las interfaces), más tests de integración
+- **955 tests unitarios** sin red ni LLM (fakes en las interfaces), más tests de integración
   contra Firestore y OpenAI reales que se saltan sin credenciales. `ruff` en lint y formato.
 - **Evaluaciones contra OpenAI real** (`python -m evals.run --suite <nombre>`):
 
 | Suite | Casos | Accuracy | Latencia p50 | Qué evalúa |
 |---|---|---|---|---|
-| `extraction` | 28 | 100% | 4,5 s | Mensaje → campos normalizados (ES, MX, EN, ambiguos, correcciones, opt-out) |
+| `extraction` | 37 | 100% | 4,5 s | Mensaje → campos normalizados (ES, MX, EN, ambiguos, correcciones, opt-out, elección de horario) |
 | `reply` | 10 | 100% | 2,3 s | Pedido del orquestador → mensaje de Sofía (tono, largo, una pregunta) |
 | `summary` | 8 | 100% | 1,7 s | Ficha + conversación → resumen sin inventar datos |
 | `sentiment` | 22 | 95,5% | 0,8 s | Mensajes → emoción (ironía, mayúsculas, mensajes cortos) |
@@ -270,13 +278,20 @@ Con honestidad, en orden de impacto:
    mostrar "escribiendo…" en WhatsApp. Medirlo con las evaluaciones.
 2. **WhatsApp real** con la cuenta de Meta del cliente (el código está listo: `deploy.ps1
    -WhatsApp`).
-3. **Agendamiento de entrevistas** al calificar (Google Calendar / Calendly) y **integración
-   con el ATS** del cliente (webhook al cambiar a `qualified`).
-4. **Agente de voz** para quien prefiere hablar: la "boca" cambia, el orquestador es el mismo.
-5. **Evals en CI** con un subconjunto barato en cada PR, y más casos sacados de conversaciones
+3. **Integración con el ATS** del cliente ([diseño listo](docs/integracion_ats.md)) y
+   **calendario real** para el agendamiento (Google Calendar o Calendly del recruiter, en vez
+   de las ventanas del YAML).
+4. **Llamada telefónica saliente** (ElevenLabs + Twilio), con un botón "llamar" en el panel:
+   el orquestador es el mismo, solo cambia la "boca" (diseño en la spec 020).
+5. **Voz en tiempo real** con ElevenLabs Conversational AI en vez de turnos grabados.
+6. **Que Sofía nunca diga algo que el sistema no registró.** En una prueba dijo "lo dejo
+   registrado" sobre un dato que la extracción no había guardado; el turno de respuesta
+   debería recibir explícitamente qué se guardó en ese turno. También, ante "¿cuánto falta?",
+   decir cuántas preguntas quedan (el orquestador lo sabe).
+7. **Evals en CI** con un subconjunto barato en cada PR, y más casos sacados de conversaciones
    reales que fallen.
-6. **Guardrail adicional** fuera del prompt (moderación de entrada y salida).
-7. **Contenido real:** la FAQ y los rangos de pago son ficticios; la tabla de licencias está
+8. **Guardrail adicional** fuera del prompt (moderación de entrada y salida).
+9. **Contenido real:** la FAQ y los rangos de pago son ficticios; la tabla de licencias está
    simplificada y la zona se valida solo por ciudad (no por barrio ni distancia).
 
 ## 9. Cómo se construyó
