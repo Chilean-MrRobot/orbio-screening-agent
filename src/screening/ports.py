@@ -6,6 +6,7 @@ Las implementaciones viven en `screening.adapters` y se inyectan; los tests usan
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
@@ -14,6 +15,7 @@ from screening.domain import (
     Candidate,
     CandidateStatus,
     ChannelName,
+    Country,
     Language,
     Message,
     ScreeningData,
@@ -24,6 +26,28 @@ from screening.domain import (
 # --- Persistencia -----------------------------------------------------------------
 
 
+CandidateOrder = Literal["updated_desc", "score_desc", "next_touch_asc"]
+
+
+class CandidateQuery(BaseModel):
+    """Consulta por índice: nada de recorrer todas las fichas (ver CLAUDE.md, Escalabilidad)."""
+
+    statuses: list[CandidateStatus] | None = None
+    country: Country | None = None
+    stage: Stage | None = None
+    touch_due_before: datetime | None = Field(
+        default=None, description="Solo fichas con `reengagement.next_touch_at` <= este instante."
+    )
+    order: CandidateOrder = "updated_desc"
+    limit: int = Field(default=50, ge=1, le=500)
+    cursor: str | None = Field(default=None, description="`next_cursor` de la página anterior.")
+
+
+class CandidatePage(BaseModel):
+    items: list[Candidate]
+    next_cursor: str | None = None
+
+
 class CandidateRepository(Protocol):
     def get(self, candidate_id: str) -> Candidate | None: ...
 
@@ -31,7 +55,25 @@ class CandidateRepository(Protocol):
 
     def save(self, candidate: Candidate) -> None: ...
 
-    def list(self, status: CandidateStatus | None = None) -> list[Candidate]: ...
+    def query(self, query: CandidateQuery) -> CandidatePage: ...
+
+    def count_by_status(self) -> dict[CandidateStatus, int]: ...
+
+    def list(self, status: CandidateStatus | None = None) -> list[Candidate]:
+        """Recorre todo: solo para tests, el seed del demo y scripts. El código usa `query`."""
+        ...
+
+
+class LeaseStore(Protocol):
+    """Exclusión entre instancias (p. ej. un candidato a la vez), con vencimiento.
+
+    `try_acquire` es atómico: devuelve True si `owner` obtuvo o renovó el lease, o si el
+    anterior venció. Un proceso caído no bloquea para siempre: el lease expira en `ttl`.
+    """
+
+    def try_acquire(self, key: str, owner: str, *, now: datetime, ttl: timedelta) -> bool: ...
+
+    def release(self, key: str, owner: str) -> None: ...
 
 
 # --- LLM --------------------------------------------------------------------------

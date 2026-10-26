@@ -1,0 +1,17 @@
+{
+  "_comment": "Índices compuestos de las consultas de CandidateRepository.query (ver src/screening/adapters/query.py). Se crean con: python deploy/create_firestore_indexes.py --project <id>",
+  "collections": ["candidates", "test_candidates"],
+  "indexes": [
+    [["idx_updated_at", "DESCENDING"], ["id", "DESCENDING"]],
+    [["status", "ASCENDING"], ["idx_updated_at", "DESCENDING"], ["id", "DESCENDING"]],
+    [["country", "ASCENDING"], ["idx_updated_at", "DESCENDING"], ["id", "DESCENDING"]],
+    [["stage", "ASCENDING"], ["idx_updated_at", "DESCENDING"], ["id", "DESCENDING"]],
+    [["status", "ASCENDING"], ["country", "ASCENDING"], ["idx_updated_at", "DESCENDING"], ["id", "DESCENDING"]],
+    [["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
+    [["status", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
+    [["country", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
+    [["status", "ASCENDING"], ["country", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
+    [["idx_next_touch_at", "ASCENDING"], ["id", "ASCENDING"]],
+    [["status", "ASCENDING"], ["idx_next_touch_at", "ASCENDING"], ["id", "ASCENDING"]]
+  ]
+}

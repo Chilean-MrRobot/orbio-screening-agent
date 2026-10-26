@@ -20,7 +20,11 @@ Definir los modelos y las interfaces que comparten todas las features, para que 
 - `Candidate.set_status`, `set_stage` y `record_event` registran cada cambio en `timeline` para que el CRM se actualice en vivo.
 
 **`screening.ports`**
-- `CandidateRepository`: `get`, `get_by_phone`, `save`, `list(status)`.
+- `CandidateRepository`: `get`, `get_by_phone`, `save`, `list(status)` (recorre todo: solo tests, seed y scripts) y, para escalar (bloque de escalabilidad):
+  - `query(CandidateQuery) -> CandidatePage`: filtros por `statuses`, `country`, `stage` y `touch_due_before` (`reengagement.next_touch_at` ≤ instante), orden `updated_desc` · `score_desc` · `next_touch_asc` (desempate por `id`), `limit` ≤ 500 y paginación con `cursor` opaco. Las fichas sin puntaje van al final de `score_desc`; las sin próximo toque no entran en `next_touch_asc`. Un cursor de otro orden lanza `InvalidCursorError`.
+  - `count_by_status()`: conteo por estado con agregaciones, sin leer las fichas.
+  - En Firestore se guardan campos de índice `idx_*` junto a la ficha; los índices compuestos están en `deploy/firestore.indexes.json`.
+- `LeaseStore`: `try_acquire(key, owner, now, ttl)` atómico (renueva si es el mismo dueño, toma el lease si venció) y `release(key, owner)` (solo el dueño). Memoria para tests; Firestore con transacción.
 - `LLMClient`: `generate_text` y `generate_structured(schema=...)`. Ambos devuelven `LLMUsage` (modelo, tokens, latencia, costo) para las métricas. Las fallas se reportan con `LLMError`.
 - `MessageChannel`: `send(OutboundMessage) -> SendResult`. Un envío fallido devuelve `ok=False`, no lanza excepción.
 
