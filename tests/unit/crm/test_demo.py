@@ -77,11 +77,11 @@ def test_the_demo_feeds_every_panel(
     assert any(c.country == Country.MX for c in qualified)
 
 
-def test_demo_app_serves_the_crm_with_the_default_token() -> None:
+def test_demo_app_serves_the_panel_with_the_default_password() -> None:
     app = create_demo_app(env={"SCREENING_REPOSITORY": "memory"})
     client = TestClient(app)
 
-    response = client.get("/crm/metrics", headers={"Authorization": "Bearer demo-token"})
+    response = client.get("/crm/metrics", headers={"Authorization": "Bearer demo"})
 
     assert response.status_code == 200
     assert response.json()["total"] == 0
