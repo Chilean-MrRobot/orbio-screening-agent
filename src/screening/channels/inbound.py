@@ -65,6 +65,10 @@ class InboundHandler(Protocol):
     def handle(self, batch: InboundBatch) -> None: ...
 
 
+class CandidateBusyError(Exception):
+    """El handler no pudo tomar al candidato; el lote no se procesó y hay que reintentarlo."""
+
+
 class InMemoryInboundMessageStore:
     """Guarda copias para comportarse como una base de datos real."""
 

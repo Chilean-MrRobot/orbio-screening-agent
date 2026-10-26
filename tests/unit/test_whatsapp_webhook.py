@@ -17,6 +17,7 @@ from pydantic import SecretStr
 from screening.api import WhatsAppSettings, create_app
 from screening.channels import InboundBatch, InMemoryInboundMessageStore
 from screening.clock import FixedClock
+from screening.conversation import CandidateBusy
 
 APP_SECRET = "app-secret"
 VERIFY_TOKEN = "verify-me"
@@ -397,6 +398,41 @@ def test_failing_handler_leaves_messages_unprocessed(
     run(scenario())
 
     assert [m.external_id for m in store.list_unprocessed()] == ["wamid.1"]
+
+
+def test_busy_candidate_batch_is_retried_after_the_window(
+    settings: WhatsAppSettings,
+    store: InMemoryInboundMessageStore,
+    clock: FixedClock,
+) -> None:
+    """Spec 015: con el lease tomado, el lote vuelve al agrupador y se reintenta."""
+
+    class BusyOnceHandler(RecordingHandler):
+        attempts = 0
+
+        def handle(self, batch: InboundBatch) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise CandidateBusy(batch.sender)
+            super().handle(batch)
+
+    handler = BusyOnceHandler()
+    app, timer = make_async_app(settings, store, handler, clock)
+
+    async def scenario() -> None:
+        async with async_client(app) as client:
+            body, headers = signed_post(webhook_payload([text_message("wamid.1", "hola")]))
+            await client.post(URL, content=body, headers=headers)
+            await timer.advance(8)
+            await eventually(lambda: handler.attempts == 1)
+            assert [m.external_id for m in store.list_unprocessed()] == ["wamid.1"]
+            await timer.advance(8)
+            await eventually(lambda: len(handler.batches) == 1)
+
+    run(scenario())
+
+    assert handler.batches[0].text == "hola"
+    assert store.list_unprocessed() == []
 
 
 # --- Configuración -------------------------------------------------------------------
