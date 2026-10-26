@@ -21,6 +21,7 @@ Cada feature parte con una spec aquí, **antes** de escribir tests o código. Or
 | 012 | Resumen post-conversación | 3 |
 | 013 | CRM (Streamlit) | 3 |
 | 014 | Clasificador de emoción | 3 |
+| 016 | Agrupación de mensajes con Cloud Tasks | 4 |
 
 ## Plantilla
 
