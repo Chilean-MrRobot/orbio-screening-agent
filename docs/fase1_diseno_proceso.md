@@ -8,7 +8,7 @@ Hoy, 13 recruiters hacen ~975 llamadas por semana para ~1.000 postulantes. El 60
 
 El diagnóstico es de **canal, orden y velocidad**:
 
-- **Canal:** contacto por WhatsApp (asíncrono) a los minutos de postular, en vez de una llamada que no se contesta.
+- **Canal:** contacto por WhatsApp (asíncrono) a los minutos de postular, en vez de una llamada que no se contesta. El canal es intercambiable: el demo corre por **chat web** y **voz en el navegador** con el mismo agente, y WhatsApp está implementado para producción.
 - **Orden:** las preguntas eliminatorias van primero, así que un candidato no apto sale en menos de un minuto.
 - **Velocidad:** el recruiter solo recibe leads limpios y ordenados por puntaje. Deja de filtrar y pasa a cerrar.
 
@@ -17,10 +17,10 @@ El diagnóstico es de **canal, orden y velocidad**:
 ```
 JSON del portal → Validación de entrada → Agente conversacional por etapas → Reglas (código) → Puntaje (código)
                                               ↑ RAG (FAQ) · clasificador de emoción · memoria en BD
-                         └──────────────── cada paso actualiza la ficha en BD → CRM en vivo ────────────────┘
+                         └──────────────── cada paso actualiza la ficha en BD → panel en vivo ──────────────┘
 ```
 
-- **El CRM se actualiza en tiempo real, no solo al final.** Cada mensaje, cada campo llenado, cada regla evaluada y cada cambio de etapa se escribe en la ficha. HR ve en vivo en qué etapa va cada candidato, qué datos ya entregó y si está esperando respuesta.
+- **El panel de recruiters se actualiza en tiempo real, no solo al final.** Cada mensaje, cada campo llenado, cada regla evaluada y cada cambio de etapa se escribe en la ficha. HR ve en vivo en qué etapa va cada candidato, qué datos ya entregó y si está esperando respuesta.
 
 - **El LLM solo conversa y normaliza** las respuestas, por ejemplo: "tengo el carnet de coche hace 5 años" → `{license_type: "B", years: 5}`.
 - **Las reglas eliminatorias y el puntaje son código determinista:** auditable, explicable y sin costo de tokens.
@@ -37,6 +37,7 @@ JSON del portal → Validación de entrada → Agente conversacional por etapas 
 | 2 | **Eliminatorias** | Licencia, tipo de licencia, vehículo y ciudad. Las reglas se evalúan **después de cada respuesta** | Falla una regla → cierre amable con motivo, *Descartado (motivo)* |
 | 3 | **Perfil** | Experiencia, disponibilidad, horario, fecha de inicio y permiso de trabajo | No descarta, solo alimenta el puntaje |
 | 4 | **Cierre** | Resumir los datos para que el candidato los confirme y contarle los próximos pasos | Corrige un dato → se actualiza y se vuelven a correr las reglas. Confirma → se calcula el puntaje, *Calificado* |
+| 5 | **Agendamiento** (opcional, YAML) | Ofrecer 3 horarios de entrevista en su zona horaria y reservar el elegido | Elige uno → *Entrevista* agendada. Ninguno sirve dos veces → *Calificado* con "agendar manualmente" para el recruiter |
 
 En cualquier etapa, si el candidato hace una pregunta, el agente consulta el **RAG** (FAQ de Grupo Sazón), responde y vuelve a la pregunta pendiente.
 
@@ -77,22 +78,22 @@ En cualquier etapa, si el candidato hace una pregunta, el agente consulta el **R
 
 | Caso | Comportamiento |
 |---|---|
-| **No responde (nunca o a mitad)** | Cadencia configurable en YAML, distinta para "nunca respondió" y "abandonó a mitad". Por defecto: WhatsApp a las 0 h → WhatsApp a las 24 h → SMS a las 72 h → mensaje de cierre por WhatsApp a los 5 días y estado *Sin respuesta*. Si responde, se cancelan los toques pendientes y retoma en la etapa pendiente. Cada toque enviado queda registrado en el CRM. Fuera de la ventana de 24 h, WhatsApp exige plantillas aprobadas por Meta |
+| **No responde (nunca o a mitad)** | Cadencia configurable en YAML, distinta para "nunca respondió" y "abandonó a mitad". Por defecto: WhatsApp a las 0 h → WhatsApp a las 24 h → SMS a las 72 h → mensaje de cierre por WhatsApp a los 5 días y estado *Sin respuesta*. Si responde, se cancelan los toques pendientes y retoma en la etapa pendiente. Cada toque enviado queda registrado en el panel. Fuera de la ventana de 24 h, WhatsApp exige plantillas aprobadas por Meta |
 | **Respuesta inválida** | Se repregunta con un ejemplo. Tras 2 intentos fallidos, el campo queda `needs_review` y la conversación sigue |
 | **Respuesta ambigua** | Se pide precisión: "pronto" → fecha; "algo de experiencia" → años y plataforma |
 | **Cambio de idioma (ES ↔ EN)** | El agente responde en el idioma del último mensaje del candidato, sin una regla aparte. Se guarda `language` para los recordatorios |
 | **Pregunta fuera del flujo** | Responde con el RAG. Si la respuesta no está en la FAQ, no inventa: "Lo consulto con el equipo". Después vuelve a la pregunta pendiente |
 | **Contenido inapropiado u off-topic** | Redirige con amabilidad. Si se repite, cierra la conversación y marca la ficha para HR |
-| **Pide hablar con una persona** | Se marca `human_requested` en el CRM y se le avisa que lo contactarán |
+| **Pide hablar con una persona** | Se marca `human_requested` en el panel y se le avisa que lo contactarán |
 | **Corrige un dato anterior** | Se actualiza el campo y se vuelven a evaluar las reglas |
 
 ## 7. Resultados
 
-- **Calificado:** el candidato confirma su resumen, se calcula el puntaje y la ficha pasa a *Calificado* con un resumen generado automáticamente. El candidato recibe: "¡Listo! Un reclutador te contactará en las próximas 48 h". En el CRM, el recruiter ve la cola ordenada por puntaje y mueve la ficha a *Entrevista* y luego a *Contratado*.
+- **Calificado:** el candidato confirma su resumen, se calcula el puntaje y la ficha pasa a *Calificado* con un resumen generado automáticamente. Sofía le ofrece horarios de entrevista y, si elige uno, la ficha queda en *Entrevista* con la fecha. En el panel, el recruiter ve la cola ordenada por puntaje y las entrevistas agendadas, y mueve la ficha a *Contratado*.
 - **Descartado:** recibe un mensaje breve y respetuoso con el motivo (por ejemplo: "por ahora necesitamos repartidores con licencia vigente"). La ficha queda *Descartado* con el motivo para las métricas.
-- **Sin respuesta / Datos inválidos:** visibles en el CRM para que HR decida.
+- **Sin respuesta / Datos inválidos:** visibles en el panel para que HR decida.
 
-**Estados del CRM:** Nuevo → Contactado → En screening (etapa) → Calificado / Descartado (motivo) / Sin respuesta / Datos inválidos → Entrevista → Contratado.
+**Estados del panel:** Nuevo → Contactado → En screening (etapa) → Calificado / Descartado (motivo) / Sin respuesta / Datos inválidos → Entrevista → Contratado.
 
 ## 8. Supuestos y preguntas para el cliente
 
@@ -100,4 +101,4 @@ En cualquier etapa, si el candidato hace una pregunta, el agente consulta el **R
 - La tabla de compatibilidad entre licencia y vehículo está simplificada para el demo.
 - **Fuera del alcance del demo:** la zona se valida solo por ciudad. Validar por barrio o código postal, o por distancia real a un local (por ejemplo, ≤30 min), queda como siguiente paso.
 - El permiso de trabajo se registra pero no descarta automáticamente; la validación legal es humana.
-- **Siguientes pasos:** agente de voz, un guardrail adicional fuera del prompt y agendamiento de entrevistas para los calificados.
+- **Siguientes pasos:** llamada telefónica saliente (voz + telefonía), un guardrail adicional fuera del prompt e integración con el ATS del cliente (diseño en `docs/integracion_ats.md`).
