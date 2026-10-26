@@ -1,6 +1,8 @@
-"""API del CRM para recruiters (spec 013), protegida con `CRM_API_TOKEN`.
+"""API del panel de recruiters (spec 013 y 018), protegida con `PANEL_PASSWORD`.
 
-El CRM de Streamlit lee por aquí: el repositorio en memoria vive en este proceso.
+El panel de Streamlit lee por aquí: el repositorio en memoria vive en este proceso. Ninguna
+ruta recorre todas las fichas: el listado pagina con `query` y los totales salen de
+`count_by_status()`.
 """
 
 from __future__ import annotations
@@ -10,38 +12,53 @@ import logging
 import os
 from collections.abc import Mapping
 from datetime import timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
+from screening.adapters.query import InvalidCursorError
 from screening.clock import Clock
 from screening.crm import (
-    CandidateRow,
+    CandidateRowPage,
     CrmMetrics,
     StatusChangeRequest,
+    StatusCounts,
     TransitionError,
     apply_status_change,
     compute_metrics,
-    filter_and_sort,
     to_row,
 )
 from screening.domain import Candidate, CandidateStatus, Country, Stage
-from screening.ports import CandidateRepository
+from screening.ports import CandidateQuery, CandidateRepository
 
 logger = logging.getLogger(__name__)
 
 CRM_PREFIX = "/crm"
-TOKEN_ENV = "CRM_API_TOKEN"
+PASSWORD_ENV = "PANEL_PASSWORD"
+METRICS_WINDOW_ENV = "PANEL_METRICS_WINDOW"
 DEFAULT_STALE_HOURS = 24.0
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
+# Fichas recientes sobre las que se calcula la analítica (los totales cuentan todas).
+DEFAULT_METRICS_WINDOW = 1000
+QUERY_MAX_LIMIT = 500  # tope de `CandidateQuery.limit`
+
+PanelOrder = Literal["score_desc", "updated_desc"]
 
 
-def build_crm_router(repository: CandidateRepository, clock: Clock, token: str) -> APIRouter:
-    def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
+def build_crm_router(
+    repository: CandidateRepository,
+    clock: Clock,
+    password: str,
+    *,
+    metrics_window: int = DEFAULT_METRICS_WINDOW,
+) -> APIRouter:
+    def require_password(authorization: Annotated[str | None, Header()] = None) -> None:
         scheme, _, value = (authorization or "").partition(" ")
-        if scheme.lower() != "bearer" or not hmac.compare_digest(value.encode(), token.encode()):
-            raise HTTPException(status_code=401, detail="invalid token")
+        if scheme.lower() != "bearer" or not hmac.compare_digest(value.encode(), password.encode()):
+            raise HTTPException(status_code=401, detail="invalid password")
 
-    router = APIRouter(prefix=CRM_PREFIX, tags=["crm"], dependencies=[Depends(require_token)])
+    router = APIRouter(prefix=CRM_PREFIX, tags=["panel"], dependencies=[Depends(require_password)])
 
     def load(candidate_id: str) -> Candidate:
         candidate = repository.get(candidate_id)
@@ -49,14 +66,37 @@ def build_crm_router(repository: CandidateRepository, clock: Clock, token: str) 
             raise HTTPException(status_code=404, detail="candidate not found")
         return candidate
 
+    def recent_sample() -> list[Candidate]:
+        sample: list[Candidate] = []
+        cursor: str | None = None
+        while len(sample) < metrics_window:
+            limit = min(QUERY_MAX_LIMIT, metrics_window - len(sample))
+            page = repository.query(
+                CandidateQuery(order="updated_desc", limit=limit, cursor=cursor)
+            )
+            sample.extend(page.items)
+            if page.next_cursor is None:
+                break
+            cursor = page.next_cursor
+        return sample
+
     @router.get("/candidates")
     def list_candidates(
         status: Annotated[list[CandidateStatus] | None, Query()] = None,
         country: Country | None = None,
         stage: Stage | None = None,
-    ) -> list[CandidateRow]:
-        selected = filter_and_sort(repository.list(), statuses=status, country=country, stage=stage)
-        return [to_row(c) for c in selected]
+        order: PanelOrder = "score_desc",
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+        cursor: str | None = None,
+    ) -> CandidateRowPage:
+        query = CandidateQuery(
+            statuses=status, country=country, stage=stage, order=order, limit=limit, cursor=cursor
+        )
+        try:
+            page = repository.query(query)
+        except InvalidCursorError as e:
+            raise HTTPException(status_code=400, detail=f"invalid cursor: {e}") from e
+        return CandidateRowPage(items=[to_row(c) for c in page.items], next_cursor=page.next_cursor)
 
     @router.get("/candidates/{candidate_id}")
     def get_candidate(candidate_id: str) -> dict[str, Any]:
@@ -73,11 +113,22 @@ def build_crm_router(repository: CandidateRepository, clock: Clock, token: str) 
         logger.info("Recruiter movió %s a %s", candidate.id, candidate.status)
         return candidate.model_dump(mode="json")
 
+    @router.get("/counts")
+    def counts() -> StatusCounts:
+        by_status = repository.count_by_status()
+        return StatusCounts(total=sum(by_status.values()), by_status=by_status)
+
     @router.get("/metrics")
     def metrics(
         stale_hours: Annotated[float, Query(gt=0)] = DEFAULT_STALE_HOURS,
     ) -> CrmMetrics:
-        return compute_metrics(repository.list(), clock.now(), timedelta(hours=stale_hours))
+        return compute_metrics(
+            recent_sample(),
+            clock.now(),
+            timedelta(hours=stale_hours),
+            status_counts=repository.count_by_status(),
+            sample_limit=metrics_window,
+        )
 
     return router
 
@@ -85,9 +136,12 @@ def build_crm_router(repository: CandidateRepository, clock: Clock, token: str) 
 def build_crm_router_from_env(
     repository: CandidateRepository, clock: Clock, env: Mapping[str, str] = os.environ
 ) -> APIRouter | None:
-    """Sin `CRM_API_TOKEN` no se expone el CRM: la ficha tiene datos personales."""
-    token = env.get(TOKEN_ENV)
-    if not token:
-        logger.warning("Sin %s: la API del CRM no se monta", TOKEN_ENV)
+    """Sin `PANEL_PASSWORD` no se expone el panel: la ficha tiene datos personales."""
+    password = env.get(PASSWORD_ENV)
+    if not password:
+        logger.warning("Sin %s: la API del panel no se monta", PASSWORD_ENV)
         return None
-    return build_crm_router(repository, clock, token)
+    window = int(env.get(METRICS_WINDOW_ENV) or DEFAULT_METRICS_WINDOW)
+    if window < 1:
+        raise ValueError(f"{METRICS_WINDOW_ENV} debe ser mayor que 0")
+    return build_crm_router(repository, clock, password, metrics_window=window)

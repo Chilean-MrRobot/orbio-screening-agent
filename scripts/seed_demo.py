@@ -33,12 +33,12 @@ _ids = count(1)
 def main(argv: list[str] | None = None) -> int:
     env = demo_env()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--api-url", default=env.get("CRM_API_URL", "http://localhost:8000"))
+    parser.add_argument("--api-url", default=env.get("PANEL_API_URL", "http://localhost:8000"))
     parser.add_argument("--timeout", type=float, default=30.0, help="segundos por mensaje")
     args = parser.parse_args(argv)
 
     api = httpx.Client(base_url=args.api_url, timeout=10)
-    crm = CrmClient(args.api_url, env["CRM_API_TOKEN"])
+    crm = CrmClient(args.api_url, env["PANEL_PASSWORD"])
     secret = env["WHATSAPP_APP_SECRET"]
     try:
         api.get("/healthz").raise_for_status()

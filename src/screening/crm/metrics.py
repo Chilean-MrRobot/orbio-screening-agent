@@ -1,9 +1,13 @@
-"""Analítica de las conversaciones: función pura sobre la lista de fichas (spec 013)."""
+"""Analítica de las conversaciones: función pura sobre una muestra de fichas (spec 013 y 018).
+
+Los totales por estado pueden venir de `count_by_status()` (todas las fichas) y el resto se
+calcula sobre la muestra: las fichas actualizadas más recientemente.
+"""
 
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 
 from pydantic import BaseModel
@@ -31,9 +35,16 @@ class TokenMetrics(BaseModel):
     cost_per_qualified_usd: float | None = None
 
 
+class StatusCounts(BaseModel):
+    total: int
+    by_status: dict[CandidateStatus, int]
+
+
 class CrmMetrics(BaseModel):
     total: int
     by_status: dict[CandidateStatus, int]
+    sample_size: int
+    sample_limit: int | None = None
     by_country: dict[str, int]
     contacted: int
     responded: int
@@ -53,22 +64,32 @@ class CrmMetrics(BaseModel):
 
 
 def compute_metrics(
-    candidates: Sequence[Candidate], now: datetime, stale_after: timedelta
+    candidates: Sequence[Candidate],
+    now: datetime,
+    stale_after: timedelta,
+    *,
+    status_counts: Mapping[CandidateStatus, int] | None = None,
+    sample_limit: int | None = None,
 ) -> CrmMetrics:
+    """Con `status_counts`, `total` y `by_status` cuentan todas las fichas, no la muestra."""
     contacted = [c for c in candidates if _has_message(c, MessageRole.AGENT)]
     responded = [c for c in candidates if _has_message(c, MessageRole.CANDIDATE)]
     completed = [c for c in candidates if c.status in COMPLETED_STATUSES]
     qualified = [c for c in candidates if c.status in QUALIFIED_STATUSES]
 
-    statuses = Counter(c.status for c in candidates)
+    statuses = Counter(
+        status_counts if status_counts is not None else (c.status for c in candidates)
+    )
     drop_off = Counter(c.stage for c in candidates if _abandoned(c, now, stale_after))
     reasons = Counter(_disqualification_reason(c) for c in candidates if c.status == S.DISQUALIFIED)
     to_qualify = [m for c in candidates if (m := _minutes_to_qualify(c)) is not None]
     scores = [c.score.total for c in candidates if c.score is not None]
 
     return CrmMetrics(
-        total=len(candidates),
+        total=sum(statuses.values()),
         by_status={status: statuses[status] for status in CandidateStatus},
+        sample_size=len(candidates),
+        sample_limit=sample_limit,
         by_country=dict(
             Counter(c.country.value if c.country else UNKNOWN_COUNTRY for c in candidates)
         ),
