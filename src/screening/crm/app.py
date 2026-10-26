@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from screening.crm import views
+from screening.crm.chat_page import chat_page
 from screening.crm.client import PASSWORD_ENV, CrmApiError, CrmClient
 from screening.crm.listing import CandidateRowPage
 from screening.crm.pagination import Pager
@@ -25,7 +26,7 @@ REFRESH_SECONDS = float(os.environ.get("PANEL_REFRESH_SECONDS") or 5)
 PAGE_SIZE = int(os.environ.get("PANEL_PAGE_SIZE") or 25)
 ALL = "Todos"
 
-st.set_page_config(page_title="Grupo Sazón · Panel de candidatos", page_icon="🛵", layout="wide")
+st.set_page_config(page_title="Grupo Sazón · Screening", page_icon="🛵", layout="wide")
 
 
 # --- Acceso -----------------------------------------------------------------------
@@ -397,7 +398,7 @@ def metrics_panel() -> None:
 # --- Página -----------------------------------------------------------------------
 
 
-def main() -> None:
+def panel_page() -> None:
     require_password()
     st.sidebar.title("🛵 Grupo Sazón")
     st.sidebar.caption("Panel de candidatos · screening por WhatsApp")
@@ -413,4 +414,12 @@ def main() -> None:
         metrics_panel()
 
 
-main()
+# Dos páginas en un solo link (spec 019): el chat del candidato es público; el panel, con
+# contraseña. Abiertas lado a lado se ve la ficha llenarse mientras se conversa.
+navigation = st.navigation(
+    [
+        st.Page(chat_page, title="Postular (candidato)", icon="💬", url_path="chat", default=True),
+        st.Page(panel_page, title="Panel (recruiter)", icon="📋", url_path="panel"),
+    ]
+)
+navigation.run()

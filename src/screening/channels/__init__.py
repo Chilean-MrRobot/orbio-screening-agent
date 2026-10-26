@@ -1,4 +1,4 @@
-"""Canales de mensajería (WhatsApp, SMS simulado, consola) y mensajes entrantes."""
+"""Canales de mensajería (WhatsApp, chat web, SMS simulado, consola) y mensajes entrantes."""
 
 from screening.channels.console import ConsoleChannel
 from screening.channels.inbound import (
@@ -12,6 +12,7 @@ from screening.channels.inbound import (
     LoggingInboundHandler,
 )
 from screening.channels.sms import SentSms, SimulatedSmsChannel
+from screening.channels.web import WebChatChannel
 from screening.channels.whatsapp import WhatsAppCloudChannel, normalize_whatsapp_phone
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "LoggingInboundHandler",
     "SentSms",
     "SimulatedSmsChannel",
+    "WebChatChannel",
     "WhatsAppCloudChannel",
     "normalize_whatsapp_phone",
 ]

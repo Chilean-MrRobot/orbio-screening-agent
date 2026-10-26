@@ -1,0 +1,9 @@
+# Construye la imagen de la API con el Dockerfile de esta carpeta (ver deploy/README.md).
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "deploy/api/Dockerfile", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
+substitutions:
+  _IMAGE: europe-west1-docker.pkg.dev/${PROJECT_ID}/orbio/api:latest
+options:
+  dynamicSubstitutions: true  # para que _IMAGE expanda ${PROJECT_ID}

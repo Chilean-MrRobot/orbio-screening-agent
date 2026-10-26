@@ -82,6 +82,7 @@ class ChannelName(StrEnum):
     WHATSAPP = "whatsapp"
     SMS = "sms"
     CONSOLE = "console"
+    WEB = "web"  # chat web público del demo (spec 019)
 
 
 class MessageRole(StrEnum):

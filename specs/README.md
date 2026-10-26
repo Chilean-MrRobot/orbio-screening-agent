@@ -25,6 +25,7 @@ Cada feature parte con una spec aquí, **antes** de escribir tests o código. Or
 | 016 | Agrupación de mensajes con Cloud Tasks | 4 |
 | 017 | Calentamiento por índice | 4 |
 | 018 | Panel paginado y una sola contraseña | 4 |
+| 019 | Chat web público del demo | 5 |
 
 ## Plantilla
 

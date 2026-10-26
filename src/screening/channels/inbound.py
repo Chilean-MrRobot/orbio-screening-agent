@@ -27,12 +27,13 @@ class InboundMessage(BaseModel):
     sent_at: datetime
     received_at: datetime
     processed: bool = False
+    channel: ChannelName = ChannelName.WHATSAPP
 
     def to_domain_message(self) -> Message:
         return Message(
             role=MessageRole.CANDIDATE,
             text=self.text or "",
-            channel=ChannelName.WHATSAPP,
+            channel=self.channel,
             created_at=self.received_at,
             external_id=self.external_id,
         )

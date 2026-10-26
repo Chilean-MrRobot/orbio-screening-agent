@@ -1,0 +1,10 @@
+# Lo que NO se sube a Cloud Build. Incluye las reglas de .gitignore (.env, resultados de evals…).
+.gcloudignore
+.git
+.gitignore
+#!include:.gitignore
+.env
+.env.*
+.venv/
+.claude/
+tests/

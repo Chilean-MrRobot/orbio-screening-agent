@@ -5,3 +5,5 @@ steps:
 images: ["${_IMAGE}"]
 substitutions:
   _IMAGE: europe-west1-docker.pkg.dev/${PROJECT_ID}/orbio/crm:latest
+options:
+  dynamicSubstitutions: true  # para que _IMAGE expanda ${PROJECT_ID}

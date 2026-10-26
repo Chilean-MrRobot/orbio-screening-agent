@@ -1,0 +1,16 @@
+# Nunca subir secretos ni entornos locales al contexto de Cloud Build.
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+.git/
+.claude/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+evals/results/
+evals/.cache/
+tests/
+*.sqlite
+*.db
