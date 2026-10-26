@@ -64,7 +64,8 @@ Inspirado en el motor declarativo usado en Kelp. Toda la lógica de negocio conf
 ## Stack
 
 - **API y webhook de WhatsApp:** FastAPI, desplegado en Cloud Run.
-- **Base de datos:** Firestore, detrás de `CandidateRepository` (en memoria para tests y desarrollo).
+- **Base de datos:** Firestore, detrás de `CandidateRepository` (en memoria para tests y desarrollo). Una sola base `(default)` en `europe-west1` para ES y MX (decisión del demo; los datos quedan en la UE por GDPR). Una base por país (ES en `europe-west1`, MX en `northamerica-south1`) queda solo documentada, no se implementa.
+- **GCP:** proyecto `gentle-app-313016`, cuenta `javierbustosbravo@gmail.com`, región `europe-west1` para todo.
 - **Panel de recruiters ("CRM"):** es nuestro propio panel en Streamlit, no un CRM externo. Link público para los evaluadores, protegido con una contraseña simple.
 - **LLM:** OpenAI. Modelos configurables en `config/client.yaml`.
 - **Capa de agentes:** Google ADK, con los modelos de OpenAI vía `LiteLlm`. La orquestación por etapas es determinista (agente custom o workflow de ADK) y los `LlmAgent` solo conversan o extraen; el RAG se expone como tool.
