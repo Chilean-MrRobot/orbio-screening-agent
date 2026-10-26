@@ -36,12 +36,18 @@ if ($Only -in "all", "api") {
         "PANEL_PASSWORD=panel-password:latest",
         "REENGAGEMENT_TASK_TOKEN=reengagement-task-token:latest"
     )
-    if (Test-Secret "langsmith-api-key") { $secrets += "LANGSMITH_API_KEY=langsmith-api-key:latest" }
+    # Trazas en LangSmith solo si existe su key en Secret Manager.
+    $tracing = "false"
+    if (Test-Secret "langsmith-api-key") {
+        $secrets += "LANGSMITH_API_KEY=langsmith-api-key:latest"
+        $tracing = "true"
+    }
 
     $envVars = @(
         "SCREENING_REPOSITORY=firestore",
         "FIRESTORE_PROJECT=$Project",
-        "LANGSMITH_TRACING=false",
+        "LANGSMITH_TRACING=$tracing",
+        "LANGSMITH_PROJECT=orbio-screening-agent",
         "PANEL_METRICS_WINDOW=1000",
         "REENGAGEMENT_MAX_PER_PASS=1000"
     )
