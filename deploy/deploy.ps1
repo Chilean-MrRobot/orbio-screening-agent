@@ -74,12 +74,15 @@ if ($Only -in "all", "api") {
         $envVars += "TASKS_SERVICE_URL=$apiUrl"
     }
 
+    # Armar cada argumento completo: `--x=($a -join ",")` PowerShell lo pasa como DOS argumentos.
+    $envArg = "--set-env-vars=" + ($envVars -join ",")
+    $secretsArg = "--set-secrets=" + ($secrets -join ",")
     gcloud run deploy screening-api --project=$Project --region=$Region `
         --image="$registry/api:latest" --service-account=$apiSa `
         --allow-unauthenticated `
         --cpu=1 --memory=1Gi --concurrency=20 --timeout=300 `
         --min-instances=0 --max-instances=3 `
-        --set-env-vars=($envVars -join ",") --set-secrets=($secrets -join ",")
+        $envArg $secretsArg
     if ($LASTEXITCODE -ne 0) { throw "falló el despliegue de la API" }
     Write-Host "API: $(Get-ServiceUrl 'screening-api')"
 }
