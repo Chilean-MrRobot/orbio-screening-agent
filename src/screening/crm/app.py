@@ -13,6 +13,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 
 from screening.crm import views
 from screening.crm.chat_page import chat_page
@@ -22,6 +23,7 @@ from screening.crm.pagination import Pager
 from screening.crm.transitions import allowed_targets
 from screening.domain import Candidate, CandidateStatus, Country, Stage
 
+load_dotenv()  # en local; en Cloud Run las variables vienen del servicio
 REFRESH_SECONDS = float(os.environ.get("PANEL_REFRESH_SECONDS") or 5)
 PAGE_SIZE = int(os.environ.get("PANEL_PAGE_SIZE") or 25)
 ALL = "Todos"
