@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from screening.adapters.fake_knowledge import FakeKnowledgeBase
-from screening.adapters.memory import InMemoryCandidateRepository
+from screening.adapters.memory import InMemoryCandidateRepository, InMemoryLeaseStore
 from screening.channels import InboundMessageStore, InMemoryInboundMessageStore
 from screening.clock import Clock
 from screening.config import AppConfig
@@ -22,12 +22,15 @@ from screening.ports import (
     CandidateRepository,
     ExtractionOutcome,
     KnowledgeBase,
+    LeaseStore,
     ReplyOutcome,
     ReplyRequest,
     ScreeningAgent,
 )
 
 if TYPE_CHECKING:
+    from google.cloud import firestore
+
     from screening.summary import SummaryService
 
 logger = logging.getLogger(__name__)
@@ -100,13 +103,30 @@ def build_storage(
     if backend != "firestore":
         raise ValueError(f"SCREENING_REPOSITORY desconocido: {backend!r} (memory o firestore)")
 
-    from google.cloud import firestore
-
     from screening.adapters.firestore import (
         FirestoreCandidateRepository,
         FirestoreInboundMessageStore,
     )
 
-    options = {"project": env.get("FIRESTORE_PROJECT"), "database": env.get("FIRESTORE_DATABASE")}
-    client = firestore.Client(**{k: v for k, v in options.items() if v})
+    client = _firestore_client(env)
     return FirestoreCandidateRepository(client), FirestoreInboundMessageStore(client)
+
+
+def build_lease_store(env: Mapping[str, str] = os.environ) -> LeaseStore:
+    """Lease por candidato (spec 015), en el mismo backend que `build_storage`."""
+    backend = (env.get("SCREENING_REPOSITORY") or "memory").lower()
+    if backend == "memory":
+        return InMemoryLeaseStore()
+    if backend != "firestore":
+        raise ValueError(f"SCREENING_REPOSITORY desconocido: {backend!r} (memory o firestore)")
+
+    from screening.adapters.firestore import FirestoreLeaseStore
+
+    return FirestoreLeaseStore(_firestore_client(env))
+
+
+def _firestore_client(env: Mapping[str, str]) -> firestore.Client:
+    from google.cloud import firestore
+
+    options = {"project": env.get("FIRESTORE_PROJECT"), "database": env.get("FIRESTORE_DATABASE")}
+    return firestore.Client(**{k: v for k, v in options.items() if v})

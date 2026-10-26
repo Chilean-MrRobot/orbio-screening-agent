@@ -10,7 +10,13 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from screening.channels import InboundBatch, InboundHandler, InboundMessage, InboundMessageStore
+from screening.channels import (
+    CandidateBusyError,
+    InboundBatch,
+    InboundHandler,
+    InboundMessage,
+    InboundMessageStore,
+)
 from screening.channels.inbound import MessageBatcher
 from screening.clock import Clock
 
@@ -65,6 +71,12 @@ class BatchDispatcher:
     async def _deliver(self, batch: InboundBatch) -> None:
         try:
             await asyncio.to_thread(self._handler.handle, batch)
+        except CandidateBusyError:
+            # Spec 015: otro proceso tiene al candidato; el lote vuelve al agrupador.
+            logger.info("Candidato %s ocupado; se reintenta el lote", batch.sender)
+            for message in batch.messages:
+                self.submit(message)
+            return
         except Exception:
             logger.exception(
                 "Falló el handler para el lote de %s; queda sin procesar", batch.sender
