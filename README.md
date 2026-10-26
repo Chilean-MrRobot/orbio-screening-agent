@@ -7,6 +7,7 @@ ficha lista para el recruiter, con resumen, en un panel que se actualiza en vivo
 
 **Demo en vivo:** <https://screening-panel-tg6cgmz3wa-ew.a.run.app>
 - **Postular (candidato)**, pública: pones nombre y país y conversas con Sofía, la asistente.
+- **Hablar con Sofía (voz)**, pública: el mismo screening hablando, con ElevenLabs (spec 020).
 - **Panel (recruiter)**, con contraseña: la ficha se llena mientras conversas.
 
 > El primer mensaje tras un rato sin uso tarda ~20 s (Cloud Run escala a cero para no cobrar).
@@ -14,8 +15,10 @@ ficha lista para el recruiter, con resumen, en un panel que se actualiza en vivo
 | Documento | Contenido |
 |---|---|
 | [docs/fase1_diseno_proceso.md](docs/fase1_diseno_proceso.md) | Fase 1: diseño del proceso (etapas, personalidad, campos, casos borde) |
+| [docs/conversaciones_ejemplo.md](docs/conversaciones_ejemplo.md) | 7 conversaciones reales: calificada, descartes, cambio a inglés, opt-out, frustración, ambigüedad |
+| [docs/integracion_ats.md](docs/integracion_ats.md) | Diseño de la integración con un ATS (bonus de diseño) |
 | [evals/datasets/](evals/datasets) | Golden datasets: casos de conversación por capacidad (extracción, respuesta, RAG, resumen, emoción) |
-| [specs/](specs/README.md) | Una spec por feature (000–019): qué hace y cómo se prueba |
+| [specs/](specs/README.md) | Una spec por feature (000–020): qué hace y cómo se prueba |
 | [deploy/README.md](deploy/README.md) | Despliegue en GCP |
 | [evals/README.md](evals/README.md) | Pipeline de evaluación con LLM-as-a-judge |
 
@@ -61,7 +64,8 @@ El recruiter solo interviene donde aporta: entrevistar y contratar.
 | RAG sobre FAQ | ✅ Embeddings + umbral: si la respuesta no está en la FAQ, Sofía dice que lo consulta |
 | Tests y evals | ✅ 845 tests unitarios + 6 suites con golden dataset y LLM-as-a-judge |
 | Diseño de despliegue | ✅ Desplegado en Cloud Run, Firestore, Secret Manager, Scheduler y Cloud Tasks |
-| Agente de voz · agendamiento · integración con ATS | ❌ Siguientes pasos (sección 8) |
+| Diseño de integración con ATS | ✅ [docs/integracion_ats.md](docs/integracion_ats.md) |
+| Agente de voz en el navegador · agendamiento de entrevistas | 🚧 En integración (specs 020 y 021) |
 
 ## 3. Arquitectura
 
