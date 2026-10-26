@@ -11,6 +11,13 @@
     [["status", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
     [["country", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
     [["status", "ASCENDING"], ["country", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
+    [["status", "ASCENDING"], ["stage", "ASCENDING"], ["idx_updated_at", "DESCENDING"], ["id", "DESCENDING"]],
+    [["country", "ASCENDING"], ["stage", "ASCENDING"], ["idx_updated_at", "DESCENDING"], ["id", "DESCENDING"]],
+    [["status", "ASCENDING"], ["country", "ASCENDING"], ["stage", "ASCENDING"], ["idx_updated_at", "DESCENDING"], ["id", "DESCENDING"]],
+    [["stage", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
+    [["status", "ASCENDING"], ["stage", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
+    [["country", "ASCENDING"], ["stage", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
+    [["status", "ASCENDING"], ["country", "ASCENDING"], ["stage", "ASCENDING"], ["idx_score", "DESCENDING"], ["id", "DESCENDING"]],
     [["idx_next_touch_at", "ASCENDING"], ["id", "ASCENDING"]],
     [["status", "ASCENDING"], ["idx_next_touch_at", "ASCENDING"], ["id", "ASCENDING"]]
   ]

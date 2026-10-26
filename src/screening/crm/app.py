@@ -1,4 +1,4 @@
-"""CRM de recruiters en Streamlit (spec 013). Solo dibuja: los datos vienen de la API.
+"""Panel de recruiters en Streamlit (spec 013 y 018). Solo dibuja: los datos vienen de la API.
 
 Correr con: `streamlit run src/screening/crm/app.py` (ver `docs/crm.md`).
 """
@@ -15,29 +15,32 @@ import pandas as pd
 import streamlit as st
 
 from screening.crm import views
-from screening.crm.client import CrmApiError, CrmClient
+from screening.crm.client import PASSWORD_ENV, CrmApiError, CrmClient
+from screening.crm.listing import CandidateRowPage
+from screening.crm.pagination import Pager
 from screening.crm.transitions import allowed_targets
 from screening.domain import Candidate, CandidateStatus, Country, Stage
 
-REFRESH_SECONDS = float(os.environ.get("CRM_REFRESH_SECONDS") or 5)
+REFRESH_SECONDS = float(os.environ.get("PANEL_REFRESH_SECONDS") or 5)
+PAGE_SIZE = int(os.environ.get("PANEL_PAGE_SIZE") or 25)
 ALL = "Todos"
 
-st.set_page_config(page_title="Grupo Sazón · CRM de candidatos", page_icon="🛵", layout="wide")
+st.set_page_config(page_title="Grupo Sazón · Panel de candidatos", page_icon="🛵", layout="wide")
 
 
 # --- Acceso -----------------------------------------------------------------------
 
 
 def require_password() -> None:
-    expected = os.environ.get("CRM_PASSWORD")
+    expected = os.environ.get(PASSWORD_ENV)
     if not expected:
-        st.error("Falta la variable de entorno CRM_PASSWORD; el CRM no arranca sin ella.")
+        st.error(f"Falta la variable de entorno {PASSWORD_ENV}; el panel no arranca sin ella.")
         st.stop()
     if st.session_state.get("authenticated"):
         return
     _, center, _ = st.columns([1, 1.2, 1])
     with center:
-        st.title("🛵 CRM de candidatos")
+        st.title("🛵 Panel de candidatos")
         st.caption("Grupo Sazón · agente de screening de Orbio")
         with st.form("login"):
             password = st.text_input("Contraseña", type="password")
@@ -58,7 +61,7 @@ def call_api[T](fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | None:
     try:
         return fn(*args, **kwargs)
     except CrmApiError as e:
-        st.error(f"No se pudo leer la API del CRM ({e}).")
+        st.error(f"No se pudo leer la API del panel ({e}).")
         return None
 
 
@@ -96,20 +99,75 @@ def sidebar_filters() -> tuple[list[CandidateStatus], Country | None, Stage | No
     )
 
 
+def get_pager() -> Pager:
+    if "pager" not in st.session_state:
+        st.session_state.pager = Pager()
+    return st.session_state.pager
+
+
+def fetch_page(
+    pager: Pager, statuses: list[CandidateStatus], country: Country | None, stage: Stage | None
+) -> CandidateRowPage | None:
+    def fetch() -> CandidateRowPage:
+        return get_client().list_candidates(
+            statuses=statuses, country=country, stage=stage, limit=PAGE_SIZE, cursor=pager.cursor
+        )
+
+    try:
+        return fetch()
+    except CrmApiError as e:
+        if e.status_code != 400 or not pager.has_previous:
+            st.error(f"No se pudo leer la API del panel ({e}).")
+            return None
+    pager.reset()  # el cursor ya no sirve (p. ej. la API cambió): vuelve a la página 1
+    return call_api(fetch)
+
+
+def kpis() -> None:
+    counts = call_api(get_client().counts)
+    if counts is None:
+        return
+    columns = st.columns(4)
+    columns[0].metric("Candidatos", counts.total)
+    columns[1].metric("En screening", counts.by_status[CandidateStatus.IN_SCREENING])
+    columns[2].metric("Calificados", counts.by_status[CandidateStatus.QUALIFIED])
+    columns[3].metric("Contactados", counts.by_status[CandidateStatus.CONTACTED])
+
+
+def pagination_controls(pager: Pager, page: CandidateRowPage) -> None:
+    left, middle, right = st.columns([1, 2, 1])
+    left.button(
+        "← Anterior",
+        on_click=pager.previous,
+        disabled=not pager.has_previous,
+        width="stretch",
+        key="page-previous",
+    )
+    middle.caption(f"Página {pager.page_number} · {len(page.items)} candidatos")
+    # `on_click` corre antes del refresco del fragmento: la página nueva ya usa el cursor.
+    right.button(
+        "Siguiente →",
+        on_click=pager.next,
+        args=(page.next_cursor,),
+        disabled=page.next_cursor is None,
+        width="stretch",
+        key="page-next",
+    )
+
+
 @st.fragment(run_every=REFRESH_SECONDS)
 def candidates_table(
     statuses: list[CandidateStatus], country: Country | None, stage: Stage | None
 ) -> None:
-    rows = call_api(get_client().list_candidates, statuses=statuses, country=country, stage=stage)
-    if rows is None:
+    kpis()
+    st.caption("Totales de todas las fichas, sin filtros.")
+
+    pager = get_pager()
+    pager.sync((tuple(statuses), country, stage))
+    page = fetch_page(pager, statuses, country, stage)
+    if page is None:
         return
-
-    kpis = st.columns(4)
-    kpis[0].metric("Candidatos", len(rows))
-    kpis[1].metric("En screening", sum(r.status == CandidateStatus.IN_SCREENING for r in rows))
-    kpis[2].metric("Calificados", sum(r.status == CandidateStatus.QUALIFIED for r in rows))
-    kpis[3].metric("Piden un humano", sum(r.human_requested for r in rows))
-
+    rows = page.items
     if not rows:
         st.info("Todavía no hay candidatos con estos filtros.")
         return
@@ -124,14 +182,19 @@ def candidates_table(
             "Último mensaje": st.column_config.TextColumn(width="large"),
         },
     )
-    st.caption(f"Se actualiza sola cada {REFRESH_SECONDS:g} s · ordenada por puntaje y actividad.")
+    pagination_controls(pager, page)
+    st.caption(f"Se actualiza sola cada {REFRESH_SECONDS:g} s · ordenada por puntaje.")
 
     names = {r.id: f"{r.name or 'Sin nombre'} · {views.STATUS_LABELS[r.status]}" for r in rows}
     current = st.session_state.get("selected_id")
+    if current and current not in names:
+        # La ficha abierta sigue abierta aunque se cambie de página.
+        names = {current: st.session_state.get("selected_label", current), **names}
     index = list(names).index(current) if current in names else 0
     st.session_state.selected_id = st.selectbox(
         "Abrir ficha", list(names), index=index, format_func=names.__getitem__
     )
+    st.session_state.selected_label = names[st.session_state.selected_id]
     # En el mismo fragmento: la ficha abierta se refresca junto con la tabla.
     candidate_detail(st.session_state.selected_id)
 
@@ -323,6 +386,9 @@ def metrics_panel() -> None:
         else:
             st.caption("Sin descartes todavía.")
     st.caption(
+        f"Postulaciones y estados: todas las fichas. El resto, sobre las "
+        f"{metrics.sample_size} fichas actualizadas más recientemente "
+        f"(máximo {metrics.sample_limit or metrics.sample_size}). "
         f"Países: {', '.join(f'{k} {v}' for k, v in metrics.by_country.items()) or '—'} · "
         f"se actualiza cada {REFRESH_SECONDS:g} s"
     )
@@ -334,7 +400,7 @@ def metrics_panel() -> None:
 def main() -> None:
     require_password()
     st.sidebar.title("🛵 Grupo Sazón")
-    st.sidebar.caption("CRM de candidatos · screening por WhatsApp")
+    st.sidebar.caption("Panel de candidatos · screening por WhatsApp")
     page = st.sidebar.radio("Vista", ["Candidatos", "Métricas"], label_visibility="collapsed")
     st.sidebar.text_input("Tu nombre (queda en el timeline)", key="recruiter")
 

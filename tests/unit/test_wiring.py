@@ -6,11 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from screening.adapters.fake_knowledge import FakeKnowledgeBase
-from screening.adapters.memory import InMemoryCandidateRepository
+from screening.adapters.firestore import FirestoreLeaseStore
+from screening.adapters.memory import InMemoryCandidateRepository, InMemoryLeaseStore
 from screening.agent import AdkScreeningAgent
 from screening.api import create_app_from_env
 from screening.api.wiring import (
     UnconfiguredAgent,
+    build_lease_store,
     build_storage,
     build_task_queue,
     load_agent,
@@ -23,6 +25,7 @@ from screening.config import AppConfig
 from screening.summary import SummaryService
 from screening.tasks import CloudTasksQueue
 from tests.unit.conversation.conftest import APPLICATION, ScriptedAgent
+from tests.unit.fake_firestore import FakeFirestoreClient
 
 
 def test_memory_storage_is_the_default() -> None:
@@ -62,6 +65,27 @@ def test_cloud_task_queue_from_env(clock: FixedClock, monkeypatch: pytest.Monkey
 def test_cloud_task_queue_without_token_fails(clock: FixedClock) -> None:
     with pytest.raises(ValueError, match="TASKS_TOKEN"):
         build_task_queue(clock, {"TASKS_BACKEND": "cloud"})
+
+
+def test_memory_lease_store_is_the_default() -> None:
+    assert isinstance(build_lease_store({}), InMemoryLeaseStore)
+
+
+def test_firestore_lease_store_with_firestore_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.cloud import firestore
+
+    monkeypatch.setattr(firestore, "Client", lambda **options: FakeFirestoreClient())
+
+    store = build_lease_store({"SCREENING_REPOSITORY": "firestore"})
+
+    assert isinstance(store, FirestoreLeaseStore)
+
+
+def test_unknown_lease_backend_fails() -> None:
+    with pytest.raises(ValueError, match="SCREENING_REPOSITORY"):
+        build_lease_store({"SCREENING_REPOSITORY": "postgres"})
 
 
 def test_unconfigured_agent_raises() -> None:
