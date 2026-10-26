@@ -93,6 +93,8 @@ def create_app(
     if crm_router is not None:
         app.include_router(crm_router)
 
+    # Cloud Run reserva las rutas que terminan en "z" (/healthz da 404 desde Google): /health.
+    @app.get("/health")
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
