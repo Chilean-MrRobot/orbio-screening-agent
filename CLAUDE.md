@@ -10,6 +10,7 @@ Es un **demo, no un producto**: cuando haya dudas, priorizar lo simple y dejar d
 - **Cada feature se entrega con sus tests unitarios y, si usa LLM, con sus casos en el golden dataset.** No se da por terminada sin ambos.
 - **Conversar antes de implementar.** Las decisiones de negocio y de diseño se discuten primero; no saltar a lo técnico ni entregar bloques largos de información.
 - **Cuando el usuario repite una indicación, se agrega a este archivo** para que quede como regla.
+- **Primero funcionando, después optimizar.** La prioridad es que el usuario pueda probar el sistema de punta a punta (desplegado y por WhatsApp); las optimizaciones (latencia, costo) se hacen después, medidas con las evaluaciones.
 
 ## Estructura
 
