@@ -41,6 +41,13 @@ class CandidateRow(BaseModel):
     updated_at: datetime
 
 
+class CandidateRowPage(BaseModel):
+    """Una página del listado; `next_cursor` es None en la última (spec 018)."""
+
+    items: list[CandidateRow]
+    next_cursor: str | None = None
+
+
 def to_row(candidate: Candidate) -> CandidateRow:
     last = candidate.messages[-1] if candidate.messages else None
     knockout = candidate.knockout

@@ -1,7 +1,7 @@
-# Construye la imagen del CRM con el Dockerfile de esta carpeta (ver docs/crm.md).
+# Construye la imagen del panel con el Dockerfile de esta carpeta (ver docs/crm.md).
 steps:
   - name: gcr.io/cloud-builders/docker
     args: ["build", "-f", "deploy/crm/Dockerfile", "-t", "${_IMAGE}", "."]
 images: ["${_IMAGE}"]
 substitutions:
-  _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/orbio/crm:latest
+  _IMAGE: europe-west1-docker.pkg.dev/${PROJECT_ID}/orbio/crm:latest

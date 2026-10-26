@@ -16,6 +16,7 @@ dependencies = [
     "litellm>=1.106",
     "mcp>=1.0",  # LiteLLM lo importa al recibir tools; no usamos servidores MCP
     "google-cloud-firestore>=2.34",
+    "google-cloud-tasks>=2.16",
     "wrapt>=1.16",
     "tzdata>=2024.1",
     "python-dotenv>=1.0",

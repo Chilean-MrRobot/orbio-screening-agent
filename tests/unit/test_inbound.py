@@ -5,9 +5,9 @@ from datetime import datetime
 import pytest
 
 from screening.channels import (
+    InboundBatch,
     InboundMessage,
     InMemoryInboundMessageStore,
-    MessageBatcher,
     normalize_whatsapp_phone,
 )
 from screening.clock import FixedClock
@@ -82,46 +82,26 @@ def test_to_domain_message(clock: FixedClock) -> None:
     assert message.created_at == clock.now()
 
 
-def test_batcher_sliding_window(clock: FixedClock) -> None:
-    batcher = MessageBatcher(window_seconds=8)
-    sender = "+34600111222"
+def test_store_lists_unprocessed_by_sender(clock: FixedClock) -> None:
+    store = InMemoryInboundMessageStore()
+    store.add(make_message("wamid.1", clock.now()))
+    store.add(make_message("wamid.2", clock.now(), sender="+525512345678"))
+    store.add(make_message("wamid.3", clock.now()))
+    store.mark_processed(["wamid.1"])
 
-    batcher.add(make_message("wamid.1", clock.now(), text="hola"), clock.now())
-    clock.advance(seconds=5)
-    assert batcher.seconds_until_due(sender, clock.now()) == 3
-    batcher.add(make_message("wamid.2", clock.now(), text="soy Lucía"), clock.now())
-    clock.advance(seconds=5)
+    pending = store.list_unprocessed_for("+34600111222")
 
-    assert batcher.seconds_until_due(sender, clock.now()) == 3
-    clock.advance(seconds=3)
-    assert batcher.seconds_until_due(sender, clock.now()) == 0
-
-    batch = batcher.pop(sender)
-    assert batch is not None
-    assert [m.external_id for m in batch.messages] == ["wamid.1", "wamid.2"]
-    assert batch.text == "hola\nsoy Lucía"
-    assert batcher.seconds_until_due(sender, clock.now()) is None
-    assert batcher.pop(sender) is None
-
-
-def test_batcher_keeps_senders_apart(clock: FixedClock) -> None:
-    batcher = MessageBatcher(window_seconds=8)
-    batcher.add(make_message("wamid.1", clock.now(), sender="+34600111222"), clock.now())
-    batcher.add(make_message("wamid.2", clock.now(), sender="+525512345678"), clock.now())
-
-    batches = batcher.pop_all()
-
-    assert sorted(b.sender for b in batches) == ["+34600111222", "+525512345678"]
-    assert batcher.pop_all() == []
+    assert [m.external_id for m in pending] == ["wamid.3"]
+    assert store.list_unprocessed_for("+34000000000") == []
 
 
 def test_batch_text_skips_non_text_messages(clock: FixedClock) -> None:
-    batcher = MessageBatcher(window_seconds=8)
-    batcher.add(make_message("wamid.1", clock.now(), text="hola"), clock.now())
-    batcher.add(make_message("wamid.2", clock.now(), text=None), clock.now())
+    batch = InboundBatch(
+        sender="+34600111222",
+        messages=[
+            make_message("wamid.1", clock.now(), text="hola"),
+            make_message("wamid.2", clock.now(), text=None),
+        ],
+    )
 
-    batch = batcher.pop("+34600111222")
-
-    assert batch is not None
-    assert len(batch.messages) == 2
     assert batch.text == "hola"

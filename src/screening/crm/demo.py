@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 DEMO_DEFAULTS = {
     "WHATSAPP_VERIFY_TOKEN": "demo-verify",
     "WHATSAPP_APP_SECRET": "demo-secret",
-    "CRM_API_TOKEN": "demo-token",
+    "PANEL_PASSWORD": "demo",
 }
 # Prompt típico de un turno: sirve para estimar los tokens de entrada.
 _PROMPT_CHARS = 2400
@@ -533,5 +533,5 @@ def create_demo_app(env: Mapping[str, str] | None = None) -> FastAPI:
         handler=orchestrator,
         clock=clock,
         applications=orchestrator,
-        crm_router=build_crm_router(repository, clock, values["CRM_API_TOKEN"]),
+        crm_router=build_crm_router(repository, clock, values["PANEL_PASSWORD"]),
     )

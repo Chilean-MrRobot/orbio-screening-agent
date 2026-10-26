@@ -45,7 +45,7 @@ Ngrok muestra una URL pública `https://<algo>.ngrok-free.app`. Las variables de
 ## 5. Probar el circuito
 
 1. Desde un teléfono registrado, escribir al número de prueba (esto abre la ventana de 24 h en la que se pueden enviar mensajes libres).
-2. Escribir dos o tres mensajes seguidos. Tras `WHATSAPP_BATCH_SECONDS` (8 s por defecto) sin mensajes nuevos, el handler de prueba responde **un solo** eco con todo el lote ("Recibí: …"). Si no hay `WHATSAPP_ACCESS_TOKEN`, solo se registra en el log.
+2. Escribir dos o tres mensajes seguidos. Los mensajes que caen en la misma ventana de `WHATSAPP_BATCH_SECONDS` (8 s por defecto) se entregan juntos, a los 8 s del primero (spec 016); el handler de prueba responde **un solo** eco con todo el lote ("Recibí: …"). Si no hay `WHATSAPP_ACCESS_TOKEN`, solo se registra en el log.
 3. Test de integración (envía `hello_world`, que funciona fuera de la ventana de 24 h):
 
 ```bash
@@ -65,11 +65,13 @@ El token temporal vence a las 24 h. Para que el demo no se corte:
 
 ## 7. Cloud Run
 
-La agrupación de mensajes corre en memoria después de responder 200 a Meta (ver la decisión en `specs/005-canal-whatsapp.md`), así que el servicio necesita **CPU siempre asignada** y **una sola instancia**:
+La agrupación de mensajes va por Cloud Tasks (`specs/016-agrupacion-cloud-tasks.md`): el webhook persiste y encola una tarea por remitente y ventana, y la tarea arma el lote leyendo Firestore. Así el servicio no necesita CPU siempre asignada y puede tener varias instancias. Primero se crea la cola (comando en la spec 016) y luego:
 
 ```bash
-gcloud run deploy orbio-screening --source . --region europe-southwest1 --no-cpu-throttling --min-instances 0 --max-instances 1 --set-secrets WHATSAPP_ACCESS_TOKEN=whatsapp-access-token:latest,WHATSAPP_APP_SECRET=whatsapp-app-secret:latest,WHATSAPP_VERIFY_TOKEN=whatsapp-verify-token:latest --set-env-vars WHATSAPP_PHONE_NUMBER_ID=<id>
+gcloud run deploy orbio-screening --source . --region europe-west1 --min-instances 0 --max-instances 3 --set-secrets WHATSAPP_ACCESS_TOKEN=whatsapp-access-token:latest,WHATSAPP_APP_SECRET=whatsapp-app-secret:latest,WHATSAPP_VERIFY_TOKEN=whatsapp-verify-token:latest,TASKS_TOKEN=tasks-token:latest --set-env-vars WHATSAPP_PHONE_NUMBER_ID=<id>,SCREENING_REPOSITORY=firestore,TASKS_BACKEND=cloud,CLOUD_TASKS_PROJECT=gentle-app-313016,CLOUD_TASKS_LOCATION=europe-west1,CLOUD_TASKS_QUEUE=inbound-batches,TASKS_SERVICE_URL=<url del servicio>
 ```
+
+`TASKS_SERVICE_URL` se conoce tras el primer despliegue: se despliega, se copia la URL y se actualiza la variable. Sin `TASKS_BACKEND=cloud` la cola es local (temporizadores en memoria) y vuelve a exigir `--no-cpu-throttling --max-instances 1`.
 
 Luego cambiar la Callback URL del paso 4 por la URL del servicio. Con `min-instances 0` el servicio escala a cero cuando no hay tráfico; con el tráfico del demo el costo cabe en la capa gratuita.
 

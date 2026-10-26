@@ -2,6 +2,7 @@
 
 from screening.channels.console import ConsoleChannel
 from screening.channels.inbound import (
+    CandidateBusyError,
     EchoInboundHandler,
     InboundBatch,
     InboundHandler,
@@ -9,12 +10,12 @@ from screening.channels.inbound import (
     InboundMessageStore,
     InMemoryInboundMessageStore,
     LoggingInboundHandler,
-    MessageBatcher,
 )
 from screening.channels.sms import SentSms, SimulatedSmsChannel
 from screening.channels.whatsapp import WhatsAppCloudChannel, normalize_whatsapp_phone
 
 __all__ = [
+    "CandidateBusyError",
     "ConsoleChannel",
     "EchoInboundHandler",
     "InMemoryInboundMessageStore",
@@ -23,7 +24,6 @@ __all__ = [
     "InboundMessage",
     "InboundMessageStore",
     "LoggingInboundHandler",
-    "MessageBatcher",
     "SentSms",
     "SimulatedSmsChannel",
     "WhatsAppCloudChannel",

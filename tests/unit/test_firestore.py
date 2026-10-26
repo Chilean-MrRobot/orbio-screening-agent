@@ -112,6 +112,17 @@ def test_add_deduplicates_by_external_id(store: FirestoreInboundMessageStore) ->
     assert store.get("wamid.1") == _inbound()
 
 
+def test_list_unprocessed_for_filters_by_sender(store: FirestoreInboundMessageStore) -> None:
+    store.add(_inbound("wamid.1"))
+    store.add(_inbound("wamid.2").model_copy(update={"sender": "+525512345678"}))
+    store.add(_inbound("wamid.3"))
+    store.mark_processed(["wamid.1"])
+
+    pending = store.list_unprocessed_for(_inbound().sender)
+
+    assert [m.external_id for m in pending] == ["wamid.3"]
+
+
 def test_mark_processed_and_list_unprocessed(store: FirestoreInboundMessageStore) -> None:
     store.add(_inbound("wamid.1"))
     store.add(_inbound("wamid.2"))

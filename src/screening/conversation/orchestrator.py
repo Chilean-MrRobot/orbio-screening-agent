@@ -7,14 +7,17 @@ después de cada paso. El agente (LLM) solo extrae y redacta.
 from __future__ import annotations
 
 import logging
-import threading
-from datetime import date, datetime
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-from screening.channels import InboundBatch
+from screening.adapters.memory import InMemoryLeaseStore
+from screening.channels import CandidateBusyError, InboundBatch
 from screening.clock import Clock
 from screening.config import AppConfig
 from screening.conversation.messages import render_template
@@ -24,6 +27,7 @@ from screening.domain import (
     ApplicationPayload,
     Candidate,
     CandidateStatus,
+    Country,
     Message,
     MessageRole,
     ReengagementState,
@@ -34,6 +38,7 @@ from screening.intake import IntakeOutcome, IntakeReason, normalize_phone, proce
 from screening.ports import (
     CandidateRepository,
     ExtractionOutcome,
+    LeaseStore,
     MessageChannel,
     OutboundMessage,
     ReplyRequest,
@@ -54,6 +59,21 @@ RESUMING_STATUSES = {CandidateStatus.NEW, CandidateStatus.CONTACTED, CandidateSt
 OPEN_STATUSES = RESUMING_STATUSES | {CandidateStatus.IN_SCREENING}
 
 APOLOGY = "apology"
+
+# Spec 015: cubre un turno completo con dos llamadas al LLM. Parámetro técnico, no de negocio.
+DEFAULT_LEASE_TTL = timedelta(seconds=120)
+_PROCESS_ID = uuid.uuid4().hex
+
+
+class CandidateBusy(CandidateBusyError):
+    """Otro proceso tiene el lease del candidato: el trabajo no se hizo y hay que reintentar.
+
+    Quien llama no marca el lote como procesado y lo reintenta más tarde (spec 015).
+    """
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"el candidato {key} está siendo procesado por otro proceso")
+        self.key = key
 
 
 class Summarizer(Protocol):
@@ -84,6 +104,8 @@ class ConversationOrchestrator:
         config: AppConfig,
         registry: SpecialConditionRegistry | None = None,
         summarizer: Summarizer | None = None,
+        leases: LeaseStore | None = None,
+        lease_ttl: timedelta = DEFAULT_LEASE_TTL,
     ) -> None:
         self._repository = repository
         self._agent = agent
@@ -92,12 +114,20 @@ class ConversationOrchestrator:
         self._config = config
         self._registry = registry
         self._summarizer = summarizer
-        self._locks: dict[str, threading.Lock] = {}
-        self._locks_guard = threading.Lock()
+        self._leases = leases if leases is not None else InMemoryLeaseStore()
+        self._lease_ttl = lease_ttl
 
     # --- Primer contacto ---------------------------------------------------------
 
     def start_application(self, raw: dict[str, Any]) -> ApplicationStartResult:
+        """Lanza `CandidateBusy` si el teléfono tiene el lease tomado (spec 015)."""
+        key = self._application_phone(raw)
+        if key is None:  # sin teléfono válido no hay conversación que proteger
+            return self._start_application(raw)
+        with self._lease(key):
+            return self._start_application(raw)
+
+    def _start_application(self, raw: dict[str, Any]) -> ApplicationStartResult:
         result = process_application(
             raw, repository=self._repository, clock=self._clock, config=self._config
         )
@@ -126,7 +156,8 @@ class ConversationOrchestrator:
     # --- Mensajes entrantes ------------------------------------------------------
 
     def handle(self, batch: InboundBatch) -> None:
-        with self._lock_for(batch.sender):
+        """Lanza `CandidateBusy` si otro proceso tiene el candidato; el resto se registra."""
+        with self._lease(batch.sender):
             try:
                 self._handle(batch)
             except Exception:
@@ -458,6 +489,25 @@ class ConversationOrchestrator:
         region = self._config.regions.get(candidate.country) if candidate.country else None
         return now.astimezone(ZoneInfo(region.timezone)).date() if region else now.date()
 
-    def _lock_for(self, sender: str) -> threading.Lock:
-        with self._locks_guard:
-            return self._locks.setdefault(sender, threading.Lock())
+    @contextmanager
+    def _lease(self, key: str) -> Iterator[None]:
+        """Exclusión por candidato entre instancias (spec 015); se libera siempre."""
+        owner = f"{_PROCESS_ID}:{uuid.uuid4().hex}"
+        if not self._leases.try_acquire(key, owner, now=self._clock.now(), ttl=self._lease_ttl):
+            raise CandidateBusy(key)
+        try:
+            yield
+        finally:
+            try:
+                self._leases.release(key, owner)
+            except Exception:
+                logger.exception("No se pudo liberar el lease de %s; vencerá solo", key)
+
+    def _application_phone(self, raw: dict[str, Any]) -> str | None:
+        phone, country = raw.get("phone"), raw.get("country")
+        if not isinstance(phone, str):
+            return None
+        known = country in {c.value for c in Country}
+        return normalize_phone(
+            phone, Country(country) if known else None, self._config.regions
+        ).e164

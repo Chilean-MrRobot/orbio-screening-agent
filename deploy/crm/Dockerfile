@@ -1,4 +1,4 @@
-# Imagen del CRM de Streamlit (spec 013). Se construye desde la raíz del repo:
+# Imagen del panel de recruiters en Streamlit (specs 013 y 018). Se construye desde la raíz del repo:
 #   gcloud builds submit --config deploy/crm/cloudbuild.yaml
 FROM python:3.12-slim
 

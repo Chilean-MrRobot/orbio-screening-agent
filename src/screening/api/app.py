@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -14,16 +15,25 @@ from pydantic import SecretStr
 
 from screening.api.applications import ApplicationStarter, build_applications_router
 from screening.api.crm import build_crm_router_from_env
-from screening.api.dispatcher import BatchDispatcher, Sleep
+from screening.api.inbound_tasks import (
+    InboundBatchProcessor,
+    InboundScheduler,
+    build_inbound_tasks_router,
+)
 from screening.api.reengagement import ReengagementRunner, build_reengagement_router
 from screening.api.settings import WhatsAppSettings
 from screening.api.webhook import build_webhook_router
-from screening.api.wiring import build_storage, load_agent, load_summarizer
+from screening.api.wiring import (
+    build_lease_store,
+    build_storage,
+    build_task_queue,
+    load_agent,
+    load_summarizer,
+)
 from screening.channels import (
     ConsoleChannel,
     InboundHandler,
     InboundMessageStore,
-    MessageBatcher,
     SimulatedSmsChannel,
     WhatsAppCloudChannel,
 )
@@ -33,6 +43,7 @@ from screening.conversation import ConversationOrchestrator
 from screening.domain import ChannelName
 from screening.ports import MessageChannel, ScreeningAgent
 from screening.reengagement import ReengagementService
+from screening.tasks import LocalTaskQueue, Sleep, TaskQueue
 
 
 def create_app(
@@ -46,19 +57,27 @@ def create_app(
     reengagement: ReengagementRunner | None = None,
     reengagement_token: SecretStr | None = None,
     crm_router: APIRouter | None = None,
+    task_queue: TaskQueue | None = None,
+    tasks_token: SecretStr | None = None,
 ) -> FastAPI:
-    dispatcher = BatchDispatcher(
-        MessageBatcher(settings.batch_seconds), store, handler, clock, sleep
-    )
+    """Sin `task_queue`, una `LocalTaskQueue` (en el proceso, con `sleep`); spec 016."""
+    if task_queue is not None and tasks_token is None:
+        raise ValueError("una cola externa necesita tasks_token (TASKS_TOKEN)")
+    queue = task_queue or LocalTaskQueue(sleep=sleep)
+    token = tasks_token or SecretStr(secrets.token_urlsafe(32))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
-        await dispatcher.shutdown()
+        if isinstance(queue, LocalTaskQueue):
+            await queue.aclose()
 
     app = FastAPI(title="Orbio screening agent", lifespan=lifespan)
-    app.state.dispatcher = dispatcher
-    app.include_router(build_webhook_router(settings, store, dispatcher, clock))
+    if isinstance(queue, LocalTaskQueue):
+        queue.attach(app, token)
+    scheduler = InboundScheduler(queue, settings.batch_seconds, clock)
+    app.include_router(build_webhook_router(settings, store, scheduler, clock))
+    app.include_router(build_inbound_tasks_router(InboundBatchProcessor(store, handler), token))
     if applications is not None:
         app.include_router(build_applications_router(applications))
     if reengagement is not None:
@@ -101,6 +120,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         clock=clock,
         config=config,
         summarizer=load_summarizer(config),
+        leases=build_lease_store(),
     )
     reengagement = ReengagementService(
         repository=repository,
@@ -110,6 +130,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         max_per_pass=int(os.environ.get("REENGAGEMENT_MAX_PER_PASS", "1000")),
     )
     token = os.environ.get("REENGAGEMENT_TASK_TOKEN")
+    task_queue, tasks_token = build_task_queue(clock)
     return create_app(
         settings,
         store=store,
@@ -119,4 +140,6 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         reengagement=reengagement,
         reengagement_token=SecretStr(token) if token else None,
         crm_router=build_crm_router_from_env(repository, clock),
+        task_queue=task_queue,
+        tasks_token=tasks_token,
     )

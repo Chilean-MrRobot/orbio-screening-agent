@@ -169,3 +169,26 @@ def test_token_costs_total_and_per_candidate() -> None:
     assert tokens.total_cost_usd == pytest.approx(0.009)
     assert tokens.avg_cost_per_candidate_usd == pytest.approx(0.0045)
     assert tokens.cost_per_qualified_usd == pytest.approx(0.009)
+
+
+def test_status_counts_replace_the_totals_of_the_sample() -> None:
+    sample = [make_candidate(status=CandidateStatus.QUALIFIED)]
+    counts = {status: 0 for status in CandidateStatus}
+    counts[CandidateStatus.QUALIFIED] = 40
+    counts[CandidateStatus.NEW] = 60
+
+    metrics = compute_metrics(sample, NOW, STALE, status_counts=counts, sample_limit=1)
+
+    assert metrics.total == 100
+    assert metrics.by_status[CandidateStatus.NEW] == 60
+    assert metrics.sample_size == 1
+    assert metrics.sample_limit == 1
+    assert metrics.qualified == 1  # la analítica sigue siendo sobre la muestra
+
+
+def test_without_status_counts_the_sample_is_everything() -> None:
+    metrics = compute_metrics([make_candidate(), make_candidate()], NOW, STALE)
+
+    assert metrics.total == 2
+    assert metrics.sample_size == 2
+    assert metrics.sample_limit is None
