@@ -40,6 +40,7 @@ from screening.ports import (
     ScreeningAgent,
     SendResult,
 )
+from screening.reengagement.schedule import refresh_next_touch
 from screening.rules import KnockoutEvaluation, SpecialConditionRegistry, evaluate_knockouts
 from screening.scoring import compute_score
 
@@ -412,6 +413,7 @@ class ConversationOrchestrator:
         else:
             logger.warning("Envío a %s falló: %s", candidate.id, result.error)
             candidate.record_event(now, "message_failed", template=template, error=result.error)
+        refresh_next_touch(candidate, self._config)  # spec 017: el índice de la pasada
         self._repository.save(candidate)
 
         if not result.ok and apologize and template != APOLOGY:

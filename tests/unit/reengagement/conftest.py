@@ -21,7 +21,7 @@ from screening.domain import (
     Stage,
     TimelineEvent,
 )
-from screening.reengagement import ReengagementReport, run_due_touches
+from screening.reengagement import ReengagementReport, refresh_next_touch, run_due_touches
 from tests.unit.conversation.conftest import RecordingChannel
 
 ES_PHONE = "+34600111222"
@@ -117,16 +117,19 @@ class Harness:
         self.channels = {ChannelName.WHATSAPP: self.whatsapp, ChannelName.SMS: self.sms}
 
     def add(self, candidate: Candidate) -> str:
+        """Guarda la ficha con su próximo toque, como lo deja el orquestador (spec 017)."""
+        refresh_next_touch(candidate, self.config)
         self.repository.save(candidate)
         return candidate.id
 
-    def run_at(self, when: datetime) -> ReengagementReport:
+    def run_at(self, when: datetime, **limits: int) -> ReengagementReport:
         self.clock.advance(seconds=(when - self.clock.now()).total_seconds())
         return run_due_touches(
             repository=self.repository,
             channels=self.channels,
             clock=self.clock,
             config=self.config,
+            **limits,
         )
 
     def get(self, candidate_id: str) -> Candidate:

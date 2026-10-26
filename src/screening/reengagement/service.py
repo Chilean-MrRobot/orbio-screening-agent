@@ -2,6 +2,7 @@
 
 Lógica determinista: decide la cadencia de cada ficha, envía el paso que toca según
 `cadences.yaml` respetando el horario hábil del país y registra todo en el `timeline`.
+La pasada lee solo las fichas vencidas, por índice y paginando (spec 017).
 """
 
 from __future__ import annotations
@@ -23,20 +24,39 @@ from screening.domain import (
     MessageRole,
     ReengagementState,
 )
-from screening.ports import CandidateRepository, MessageChannel, OutboundMessage, SendResult
+from screening.ports import (
+    CandidateQuery,
+    CandidateRepository,
+    MessageChannel,
+    OutboundMessage,
+    SendResult,
+)
 from screening.reengagement.hours import is_open, next_opening
-from screening.reengagement.models import ReengagementReport, TouchOutcome, TouchRecord
+from screening.reengagement.models import (
+    BackfillReport,
+    ReengagementReport,
+    TouchOutcome,
+    TouchRecord,
+)
+from screening.reengagement.schedule import (
+    ELIGIBLE_STATUSES,
+    active_anchor,
+    business_hours_for,
+    cadence_for,
+    first_pending_step,
+    schedule_next_touch,
+    silence_start,
+    step_due_at,
+)
 
 logger = logging.getLogger(__name__)
 
 # Fuera de esta ventana desde el último mensaje del candidato, Meta solo acepta plantillas.
 WHATSAPP_SESSION_WINDOW = timedelta(hours=24)
 
-NEVER_RESPONDED = "never_responded"
-ABANDONED = "abandoned_mid_screening"
-
-# Únicos estados con conversación pendiente; el resto son finales para el calentamiento.
-ELIGIBLE_STATUSES = {CandidateStatus.NEW, CandidateStatus.CONTACTED, CandidateStatus.IN_SCREENING}
+# Parámetros operativos de la pasada (no de negocio): fichas por consulta y tope por pasada.
+DEFAULT_PAGE_SIZE = 100
+DEFAULT_MAX_PER_PASS = 1000
 
 
 class ReengagementService:
@@ -49,11 +69,15 @@ class ReengagementService:
         channels: dict[ChannelName, MessageChannel],
         clock: Clock,
         config: AppConfig,
+        page_size: int = DEFAULT_PAGE_SIZE,
+        max_per_pass: int = DEFAULT_MAX_PER_PASS,
     ) -> None:
         self._repository = repository
         self._channels = channels
         self._clock = clock
         self._config = config
+        self._page_size = page_size
+        self._max_per_pass = max_per_pass
 
     def run(self) -> ReengagementReport:
         return run_due_touches(
@@ -61,6 +85,8 @@ class ReengagementService:
             channels=self._channels,
             clock=self._clock,
             config=self._config,
+            page_size=self._page_size,
+            max_per_pass=self._max_per_pass,
         )
 
 
@@ -70,16 +96,62 @@ def run_due_touches(
     channels: dict[ChannelName, MessageChannel],
     clock: Clock,
     config: AppConfig,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    max_per_pass: int = DEFAULT_MAX_PER_PASS,
 ) -> ReengagementReport:
-    """Una pasada: envía los toques vencidos. Una ficha que falla no corta la pasada."""
+    """Una pasada: envía los toques vencidos. Una ficha que falla no corta la pasada.
+
+    Lee por `next_touch_at` (lo más atrasado primero) hasta `max_per_pass` fichas. Cada ficha
+    procesada queda con su próximo toque después de `now` (o sin toque), así que el cursor
+    no la vuelve a ver y una pasada repetida o interrumpida no reenvía nada.
+    """
     touches = _Pass(repository, channels, clock, config)
-    for candidate in repository.list():
-        try:
-            touches.process(candidate)
-        except Exception:
-            logger.exception("No se pudo calentar la ficha %s", candidate.id)
-            touches.report.errors.append(candidate.id)
-    return touches.report
+    report = touches.report
+    now = clock.now()
+    cursor: str | None = None
+    while True:
+        limit = min(page_size, max_per_pass - report.read)
+        page = repository.query(
+            CandidateQuery(touch_due_before=now, order="next_touch_asc", limit=limit, cursor=cursor)
+        )
+        for candidate in page.items:
+            report.read += 1
+            try:
+                touches.process(candidate)
+            except Exception:
+                logger.exception("No se pudo calentar la ficha %s", candidate.id)
+                report.errors.append(candidate.id)
+        cursor = page.next_cursor
+        if cursor is None:
+            return report
+        if report.read >= max_per_pass:
+            report.capped = True
+            return report
+
+
+def backfill_next_touch(
+    repository: CandidateRepository, config: AppConfig, *, page_size: int = 200
+) -> BackfillReport:
+    """Recalcula `next_touch_at` de las fichas abiertas (las anteriores a la spec 017).
+
+    Idempotente: solo guarda las fichas cuyo próximo toque cambia.
+    """
+    report = BackfillReport()
+    cursor: str | None = None
+    while True:
+        page = repository.query(
+            CandidateQuery(statuses=list(ELIGIBLE_STATUSES), limit=page_size, cursor=cursor)
+        )
+        for candidate in page.items:
+            report.read += 1
+            due = schedule_next_touch(candidate, config)
+            if due != candidate.reengagement.next_touch_at:
+                candidate.reengagement.next_touch_at = due
+                repository.save(candidate)
+                report.updated += 1
+        cursor = page.next_cursor
+        if cursor is None:
+            return report
 
 
 class _Pass:
@@ -97,14 +169,18 @@ class _Pass:
         self.report = ReengagementReport()
 
     def process(self, candidate: Candidate) -> None:
-        cadence = self._cadence_for(candidate)
-        hours = self._config.cadences.business_hours.get(candidate.country)  # type: ignore[arg-type]
+        cadence = cadence_for(candidate, self._config)
+        hours = business_hours_for(candidate, self._config)
         if cadence is None or hours is None:
+            # Dato viejo: sin cadencia que aplique, sale de la consulta de vencidas.
+            if candidate.reengagement.next_touch_at is not None:
+                candidate.reengagement.next_touch_at = None
+                self._repository.save(candidate)
             return
         self.report.evaluated += 1
         now = self._clock.now()
 
-        anchor = self._active_anchor(candidate, cadence)
+        anchor = active_anchor(candidate, cadence)
         if anchor is None:
             anchor = self._start(candidate, cadence, now)
         state = candidate.reengagement
@@ -148,64 +224,11 @@ class _Pass:
         self._touch(candidate, cadence, anchor, step, now)
         self._repository.save(candidate)
 
-    # --- Qué cadencia aplica y desde cuándo -------------------------------------------
-
-    def _cadence_for(self, candidate: Candidate) -> Cadence | None:
-        if (
-            candidate.status not in ELIGIBLE_STATUSES
-            or candidate.human_requested
-            or candidate.phone is None
-        ):
-            return None
-        conversation = [m for m in candidate.messages if m.role != MessageRole.SYSTEM]
-        if candidate.status == CandidateStatus.IN_SCREENING:
-            if conversation and conversation[-1].role == MessageRole.AGENT:
-                return self._cadence(ABANDONED)
-            return None
-        if any(m.role == MessageRole.CANDIDATE for m in conversation):
-            return None
-        return self._cadence(NEVER_RESPONDED)
-
-    def _cadence(self, trigger: str) -> Cadence | None:
-        return next((c for c in self._config.cadences.cadences if c.trigger == trigger), None)
-
-    def _silence_start(self, candidate: Candidate, cadence: Cadence) -> datetime:
-        agent = [m.created_at for m in candidate.messages if m.role == MessageRole.AGENT]
-        if cadence.trigger == NEVER_RESPONDED:
-            return agent[0] if agent else candidate.created_at
-        return candidate.last_agent_message_at or agent[-1]
-
-    def _active_anchor(self, candidate: Candidate, cadence: Cadence) -> datetime | None:
-        """Inicio del silencio de la cadencia en curso, o `None` si hay que (re)arrancarla."""
-        if candidate.reengagement.cadence != cadence.name:
-            return None
-        started = next(
-            (
-                e
-                for e in reversed(candidate.timeline)
-                if e.type == "reengagement_started" and e.detail.get("cadence") == cadence.name
-            ),
-            None,
-        )
-        if started is None:
-            return None
-        anchor = datetime.fromisoformat(started.detail["silence_started_at"])
-        replied = candidate.last_candidate_message_at
-        if replied is not None and replied > anchor:
-            return None
-        return anchor
+    # --- Desde cuándo y cuándo toca ---------------------------------------------------
 
     def _start(self, candidate: Candidate, cadence: Cadence, now: datetime) -> datetime:
-        anchor = self._silence_start(candidate, cadence)
-        # Los pasos que ya salieron (el `first_contact` del orquestador) no se repiten.
-        sent = {
-            e.detail.get("template")
-            for e in candidate.timeline
-            if e.type == "message_sent" and e.at >= anchor
-        }
-        index = 0
-        while index < len(cadence.steps) and cadence.steps[index].template in sent:
-            index += 1
+        anchor = silence_start(candidate, cadence)
+        index = first_pending_step(candidate, cadence, anchor)
         candidate.reengagement = ReengagementState(cadence=cadence.name, next_step_index=index)
         candidate.record_event(
             now,
@@ -219,12 +242,12 @@ class _Pass:
         return anchor
 
     def _schedule(self, candidate: Candidate, cadence: Cadence, anchor: datetime) -> None:
+        hours = business_hours_for(candidate, self._config)
+        assert hours is not None
         state = candidate.reengagement
-        if state.next_step_index >= len(cadence.steps):
-            state.next_touch_at = None
-            return
-        step = cadence.steps[state.next_step_index]
-        state.next_touch_at = anchor + timedelta(hours=step.after_hours)
+        state.next_touch_at = step_due_at(
+            cadence, state.next_step_index, anchor, hours, self._config.cadences.queue_outside_hours
+        )
 
     # --- Pasos ------------------------------------------------------------------------
 

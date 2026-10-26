@@ -56,7 +56,7 @@ class ReengagementReport(BaseModel):
 
 ### Qué cadencia aplica
 
-En cada pasada se recorren todas las fichas (`repository.list()`) y se decide:
+En cada pasada se leen las fichas con un toque vencido (spec 017) y se decide:
 
 | Ficha | Cadencia | Inicio del silencio |
 |---|---|---|
@@ -102,7 +102,9 @@ El orquestador y la tarea leen, modifican y guardan la ficha completa. Si el can
 
 ### Escalar
 
-Hoy cada pasada carga todas las fichas: está bien para un demo con decenas. Para escalar:
+> Los puntos 1 a 3 están implementados en la spec 017 (`specs/017-calentamiento-por-indice.md`): la pasada consulta por `next_touch_at`, paginada y con tope, y el orquestador agenda el próximo toque al enviar.
+
+Antes cada pasada cargaba todas las fichas. Para escalar:
 
 1. Consultar solo las fichas vencidas: `where("reengagement.next_touch_at", "<=", now)` con un índice en Firestore sobre `next_touch_at` (más `status` si se combina). Cuando un toque se encola, `next_touch_at` pasa a la próxima apertura, así que la consulta no devuelve una y otra vez las fichas que esperan el horario hábil.
 2. Para eso, quien deja una ficha en silencio debe agendar el primer toque: el orquestador, al enviar, escribiría `next_touch_at` (hoy lo calcula la tarea en la pasada siguiente). Agregar `find_due(now)` a `CandidateRepository` es un cambio de contrato de la ola 0.
