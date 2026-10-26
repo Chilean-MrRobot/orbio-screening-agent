@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -75,8 +76,10 @@ def run_sync[R](factory: Callable[[], Coroutine[Any, Any, R]]) -> R:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(factory())
+    # Con el contexto actual: la traza de ADK queda dentro de la del turno en LangSmith.
+    context = contextvars.copy_context()
     with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(lambda: asyncio.run(factory())).result()
+        return pool.submit(context.run, lambda: asyncio.run(factory())).result()
 
 
 async def _run(

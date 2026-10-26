@@ -22,6 +22,7 @@ from screening.clock import Clock
 from screening.config import AppConfig
 from screening.conversation.messages import render_template
 from screening.conversation.stages import CONFIRMATION_FIELD, current_stage, missing_fields
+from screening.conversation.tracing import trace_turn
 from screening.conversation.usage import record_usage
 from screening.domain import (
     ApplicationPayload,
@@ -146,11 +147,13 @@ class ConversationOrchestrator:
 
     def start(self, candidate: Candidate) -> bool:
         """Envía `first_contact`; si sale bien, la ficha pasa a `contacted`."""
-        text = render_template("first_contact", candidate, self._config)
-        ok = self._send(candidate, text, template="first_contact", apologize=False)
-        if ok:
-            candidate.set_status(CandidateStatus.CONTACTED, self._clock.now())
-            self._repository.save(candidate)
+        inputs = {"evento": "postulación", "fuente": candidate.application.source}
+        with trace_turn("postulación", candidate, inputs):
+            text = render_template("first_contact", candidate, self._config)
+            ok = self._send(candidate, text, template="first_contact", apologize=False)
+            if ok:
+                candidate.set_status(CandidateStatus.CONTACTED, self._clock.now())
+                self._repository.save(candidate)
         return ok
 
     # --- Mensajes entrantes ------------------------------------------------------
@@ -184,13 +187,15 @@ class ConversationOrchestrator:
         candidate.reengagement = ReengagementState()
         self._repository.save(candidate)
 
-        try:
-            self._converse(candidate, new)
-        except Exception as exc:
-            logger.exception("Error del orquestador con %s", candidate.id)
-            candidate.record_event(self._clock.now(), "orchestrator_error", error=repr(exc))
-            self._repository.save(candidate)
-            self._apologize(candidate)
+        inputs = {"mensaje": "\n".join(m.text for m in new), "etapa": candidate.stage.value}
+        with trace_turn("turno", candidate, inputs):
+            try:
+                self._converse(candidate, new)
+            except Exception as exc:
+                logger.exception("Error del orquestador con %s", candidate.id)
+                candidate.record_event(self._clock.now(), "orchestrator_error", error=repr(exc))
+                self._repository.save(candidate)
+                self._apologize(candidate)
 
     def _converse(self, candidate: Candidate, new: list[Message]) -> None:
         if candidate.status == CandidateStatus.OPTED_OUT:

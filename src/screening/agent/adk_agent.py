@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import time
@@ -180,7 +181,8 @@ class AdkScreeningAgent:
         # El clasificador corre en paralelo con la extracción: no suma su latencia al turno.
         with ThreadPoolExecutor(max_workers=1) as pool:
             sentiment = (
-                pool.submit(self._classify, candidate, new_messages)
+                # Con el contexto del turno: su traza queda dentro del turno en LangSmith.
+                pool.submit(contextvars.copy_context().run, self._classify, candidate, new_messages)
                 if self.sentiment_classifier
                 else None
             )
