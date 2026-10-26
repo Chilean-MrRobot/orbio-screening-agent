@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI
 from pydantic import SecretStr
 
+from screening.adapters.elevenlabs import ElevenLabsSettings, ElevenLabsVoice
 from screening.api.applications import ApplicationStarter, build_applications_router
 from screening.api.crm import build_crm_router_from_env
 from screening.api.inbound_tasks import (
@@ -22,7 +23,8 @@ from screening.api.inbound_tasks import (
 )
 from screening.api.reengagement import ReengagementRunner, build_reengagement_router
 from screening.api.settings import WhatsAppSettings
-from screening.api.web_chat import build_web_chat_router
+from screening.api.voice import AudioLimits, build_voice_router
+from screening.api.web_chat import WebChatService, build_web_chat_router
 from screening.api.webhook import build_webhook_router
 from screening.api.wiring import (
     build_lease_store,
@@ -61,6 +63,7 @@ def create_app(
     task_queue: TaskQueue | None = None,
     tasks_token: SecretStr | None = None,
     web_chat_router: APIRouter | None = None,
+    voice_router: APIRouter | None = None,
 ) -> FastAPI:
     """Sin `settings` de WhatsApp no se monta el webhook ni la cola de lotes (spec 019).
 
@@ -86,6 +89,8 @@ def create_app(
         app.include_router(build_inbound_tasks_router(InboundBatchProcessor(store, handler), token))
     if web_chat_router is not None:
         app.include_router(web_chat_router)
+    if voice_router is not None:
+        app.include_router(voice_router)
     if applications is not None:
         app.include_router(build_applications_router(applications))
     if reengagement is not None:
@@ -141,6 +146,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         max_per_pass=int(os.environ.get("REENGAGEMENT_MAX_PER_PASS", "1000")),
     )
     token = os.environ.get("REENGAGEMENT_TASK_TOKEN")
+    voice_settings = ElevenLabsSettings.from_env()  # sin key, la voz queda deshabilitada
     # La cola de lotes solo existe para el webhook de WhatsApp.
     task_queue, tasks_token = build_task_queue(clock) if settings else (None, None)
     return create_app(
@@ -156,6 +162,13 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         tasks_token=tasks_token,
         web_chat_router=build_web_chat_router(
             starter=orchestrator, handler=orchestrator, repository=repository, clock=clock
+        ),
+        voice_router=build_voice_router(
+            chat=WebChatService(
+                starter=orchestrator, handler=orchestrator, repository=repository, clock=clock
+            ),
+            voice=ElevenLabsVoice(voice_settings) if voice_settings else None,
+            limits=AudioLimits.from_env(),
         ),
     )
 

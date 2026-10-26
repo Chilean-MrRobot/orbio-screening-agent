@@ -42,6 +42,10 @@ if ($Only -in "all", "api") {
         $secrets += "LANGSMITH_API_KEY=langsmith-api-key:latest"
         $tracing = "true"
     }
+    # Agente de voz (spec 020) solo si existe la key de ElevenLabs; sin ella /voice responde 503.
+    if (Test-Secret "elevenlabs-api-key") {
+        $secrets += "ELEVENLABS_API_KEY=elevenlabs-api-key:latest"
+    }
 
     $envVars = @(
         "SCREENING_REPOSITORY=firestore",
@@ -50,7 +54,10 @@ if ($Only -in "all", "api") {
         "LANGSMITH_PROJECT=orbio-screening-agent",
         "LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com",
         "PANEL_METRICS_WINDOW=1000",
-        "REENGAGEMENT_MAX_PER_PASS=1000"
+        "REENGAGEMENT_MAX_PER_PASS=1000",
+        "ELEVENLABS_VOICE_ID=FGY2WhTYpPnrIDTdsKH5",
+        "ELEVENLABS_TTS_MODEL=eleven_flash_v2_5",
+        "ELEVENLABS_STT_MODEL=scribe_v1"
     )
     $apiUrl = Get-ServiceUrl "screening-api"
     if ($WhatsApp) {

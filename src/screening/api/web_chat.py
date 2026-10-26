@@ -93,24 +93,36 @@ def generate_test_phone(country: Country, rng: random.Random | None = None) -> s
     raise RuntimeError(f"no se pudo generar un teléfono de prueba para {country}")
 
 
-def build_web_chat_router(
-    *,
-    starter: ApplicationStarter,
-    handler: InboundHandler,
-    repository: CandidateRepository,
-    clock: Clock,
-) -> APIRouter:
-    router = APIRouter(prefix=CHAT_PATH, tags=["chat web"])
+def is_closed(candidate: Candidate) -> bool:
+    return candidate.stage == Stage.DONE or candidate.phone is None
 
-    def load(candidate_id: str) -> Candidate:
-        candidate = repository.get(candidate_id)
+
+class WebChatService:
+    """Postular y conversar por la web: lo comparten el chat (spec 019) y la voz (spec 020).
+
+    Lanza `HTTPException` con el código que corresponde (404, 409, 422).
+    """
+
+    def __init__(
+        self,
+        *,
+        starter: ApplicationStarter,
+        handler: InboundHandler,
+        repository: CandidateRepository,
+        clock: Clock,
+    ) -> None:
+        self._starter = starter
+        self._handler = handler
+        self._repository = repository
+        self._clock = clock
+
+    def load(self, candidate_id: str) -> Candidate:
+        candidate = self._repository.get(candidate_id)
         if candidate is None:
             raise HTTPException(status_code=404, detail="conversación no encontrada")
         return candidate
 
-    # `def` y no `async def`: el orquestador es bloqueante (LLM) y FastAPI lo corre en un hilo.
-    @router.post("/start")
-    def start(body: StartChatRequest) -> ChatView:
+    def start(self, body: StartChatRequest) -> Candidate:
         raw = {
             "application_id": f"web-{uuid.uuid4().hex}",
             "source": "web",
@@ -120,7 +132,7 @@ def build_web_chat_router(
             "city": body.city,
         }
         try:
-            result = starter.start_application(raw)
+            result = self._starter.start_application(raw)
         except CandidateBusyError as e:
             raise HTTPException(status_code=409, detail="intenta de nuevo en unos segundos") from e
         outcome = getattr(result, "outcome", None)
@@ -129,31 +141,50 @@ def build_web_chat_router(
             raise HTTPException(status_code=422, detail="el teléfono no es válido para ese país")
         if candidate_id is None:
             raise HTTPException(status_code=422, detail="no se pudo crear la postulación")
-        return to_view(load(candidate_id))
+        return self.load(candidate_id)
 
-    @router.get("/{candidate_id}")
-    def get(candidate_id: str) -> ChatView:
-        return to_view(load(candidate_id))
-
-    @router.post("/{candidate_id}/messages")
-    def send(candidate_id: str, body: SendMessageRequest) -> ChatView:
-        candidate = load(candidate_id)
+    def send(self, candidate_id: str, text: str) -> Candidate:
+        candidate = self.load(candidate_id)
         if candidate.stage == Stage.DONE or candidate.phone is None:
-            return to_view(candidate)  # conversación cerrada: no se procesa nada más
-        now = clock.now()
+            return candidate  # conversación cerrada: no se procesa nada más
+        now = self._clock.now()
         message = InboundMessage(
             external_id=f"web-in-{uuid.uuid4().hex}",
             sender=candidate.phone,
-            text=body.text.strip(),
+            text=text.strip(),
             type="text",
             sent_at=now - timedelta(milliseconds=1),
             received_at=now,
             channel=ChannelName.WEB,
         )
         try:
-            handler.handle(InboundBatch(sender=candidate.phone, messages=[message]))
+            self._handler.handle(InboundBatch(sender=candidate.phone, messages=[message]))
         except CandidateBusyError as e:
             raise HTTPException(status_code=409, detail="Sofía está respondiendo, espera") from e
-        return to_view(load(candidate_id))
+        return self.load(candidate_id)
+
+
+def build_web_chat_router(
+    *,
+    starter: ApplicationStarter,
+    handler: InboundHandler,
+    repository: CandidateRepository,
+    clock: Clock,
+) -> APIRouter:
+    router = APIRouter(prefix=CHAT_PATH, tags=["chat web"])
+    service = WebChatService(starter=starter, handler=handler, repository=repository, clock=clock)
+
+    # `def` y no `async def`: el orquestador es bloqueante (LLM) y FastAPI lo corre en un hilo.
+    @router.post("/start")
+    def start(body: StartChatRequest) -> ChatView:
+        return to_view(service.start(body))
+
+    @router.get("/{candidate_id}")
+    def get(candidate_id: str) -> ChatView:
+        return to_view(service.load(candidate_id))
+
+    @router.post("/{candidate_id}/messages")
+    def send(candidate_id: str, body: SendMessageRequest) -> ChatView:
+        return to_view(service.send(candidate_id, body.text))
 
     return router

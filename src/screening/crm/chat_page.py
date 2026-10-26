@@ -43,8 +43,9 @@ def chat_page() -> None:
     conversation(view)
 
 
-def application_form() -> None:
-    with st.form("application"):
+def application_fields(form_key: str) -> tuple[str, Country, str] | None:
+    """El formulario de postulación (también lo usa la página de voz, spec 020)."""
+    with st.form(form_key):
         st.subheader("Tu postulación")
         full_name = st.text_input("Nombre y apellido", max_chars=80)
         country = st.selectbox(
@@ -57,14 +58,22 @@ def application_form() -> None:
         )
         submitted = st.form_submit_button("Postular", type="primary")
     if not submitted:
-        return
+        return None
     if len(full_name.strip()) < 2:
         st.error("Escribe tu nombre.")
+        return None
+    return full_name.strip(), country, phone.strip()
+
+
+def application_form() -> None:
+    fields = application_fields("application")
+    if fields is None:
         return
+    full_name, country, phone = fields
     with st.spinner("Creando tu postulación…"):
         try:
             view = get_chat_client().start(
-                full_name=full_name.strip(), country=country, phone=phone.strip() or None
+                full_name=full_name, country=country, phone=phone or None
             )
         except CrmApiError as e:
             st.error(f"No se pudo postular: {e.detail}")
