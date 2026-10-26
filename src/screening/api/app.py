@@ -127,6 +127,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         channels={ChannelName.WHATSAPP: channel, ChannelName.SMS: SimulatedSmsChannel(clock)},
         clock=clock,
         config=config,
+        max_per_pass=int(os.environ.get("REENGAGEMENT_MAX_PER_PASS", "1000")),
     )
     token = os.environ.get("REENGAGEMENT_TASK_TOKEN")
     task_queue, tasks_token = build_task_queue(clock)

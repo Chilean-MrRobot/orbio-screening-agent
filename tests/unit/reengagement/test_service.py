@@ -52,15 +52,19 @@ def test_never_responded_sends_each_step_at_its_hour(harness: Harness) -> None:
 
 def test_first_contact_is_not_resent(harness: Harness) -> None:
     cid = harness.add(contacted(MONDAY))
+    assert harness.get(cid).reengagement.next_touch_at == MONDAY + 24 * H
 
-    report = harness.run_at(MONDAY + timedelta(minutes=15))
+    early = harness.run_at(MONDAY + timedelta(minutes=15))
+    assert early.read == 0  # aún no vence: la pasada ni la lee
 
-    assert report.touches == []
+    report = harness.run_at(MONDAY + 24 * H)
+
     assert report.evaluated == 1
+    assert harness.templates == ["reminder_never_responded"]
     state = harness.get(cid).reengagement
     assert state.cadence == "never_responded"
-    assert state.next_step_index == 1
-    assert state.next_touch_at == MONDAY + 24 * H
+    assert state.next_step_index == 2
+    assert state.next_touch_at == MONDAY + 72 * H
     [started] = harness.events(cid, "reengagement_started")
     assert started.detail["silence_started_at"] == MONDAY.isoformat()
 
@@ -156,49 +160,48 @@ def test_touches_do_not_move_the_anchor(harness: Harness) -> None:
 # --- Horario hábil ------------------------------------------------------------------
 
 
-def test_same_instant_sends_in_spain_and_queues_in_mexico(harness: Harness) -> None:
+def test_same_instant_sends_in_spain_and_waits_for_the_opening_in_mexico(
+    harness: Harness,
+) -> None:
     # Lunes 08:00 UTC: 10:00 en Madrid, 02:00 en Ciudad de México.
     anchor = MONDAY - 2 * H
     es = harness.add(abandoned(anchor))
     mx = harness.add(abandoned(anchor, phone=MX_PHONE, country=Country.MX))
+    opening = datetime(2026, 10, 20, 9, 0, tzinfo=ZoneInfo("America/Mexico_City"))
+    assert harness.get(mx).reengagement.next_touch_at == opening  # ya agendado al abrir
 
     report = harness.run_at(anchor + 24 * H)
 
-    outcomes = {t.candidate_id: t.outcome for t in report.touches}
-    assert outcomes == {es: TouchOutcome.SENT, mx: TouchOutcome.QUEUED}
-    opening = datetime(2026, 10, 20, 9, 0, tzinfo=ZoneInfo("America/Mexico_City"))
-    assert harness.get(mx).reengagement.next_touch_at == opening
-    [queued] = harness.events(mx, "reengagement_touch_queued")
-    assert queued.detail["step"] == "resume_whatsapp"
+    assert {t.candidate_id: t.outcome for t in report.touches} == {es: TouchOutcome.SENT}
+    assert report.read == 1
+    assert harness.events(mx, "reengagement_touch_queued") == []
 
 
-def test_queued_touch_is_sent_at_the_next_opening(harness: Harness) -> None:
+def test_mexican_touch_is_sent_at_the_next_opening(harness: Harness) -> None:
     anchor = MONDAY - 2 * H
     mx = harness.add(abandoned(anchor, phone=MX_PHONE, country=Country.MX))
     opening = datetime(2026, 10, 20, 9, 0, tzinfo=ZoneInfo("America/Mexico_City"))
 
-    harness.run_at(anchor + 24 * H)
-    harness.run_at(anchor + 25 * H)
-    harness.run_at(opening - timedelta(minutes=15))
+    for when in (anchor + 24 * H, anchor + 25 * H, opening - timedelta(minutes=15)):
+        assert harness.run_at(when).read == 0
     assert harness.templates == []
-    assert len(harness.events(mx, "reengagement_touch_queued")) == 1
 
     harness.run_at(opening)
     assert harness.templates == ["reminder_abandoned"]
+    assert harness.events(mx, "reengagement_touch_queued") == []
 
 
-def test_sunday_in_spain_is_queued_to_monday_after_the_time_change(harness: Harness) -> None:
+def test_sunday_in_spain_waits_for_monday_after_the_time_change(harness: Harness) -> None:
     # Jueves 22/10 12:00 Madrid; +72 h cae en domingo 25/10, día en que termina el horario
     # de verano: la apertura del lunes es a las 09:00 CET = 08:00 UTC.
     anchor = datetime(2026, 10, 22, 10, 0, tzinfo=UTC)
     cid = harness.add(contacted(anchor))
 
     harness.run_at(anchor + 24 * H)
-    report = harness.run_at(anchor + 72 * H)
-
-    assert [t.outcome for t in report.touches] == [TouchOutcome.QUEUED]
     monday_opening = datetime(2026, 10, 26, 8, 0, tzinfo=UTC)
     assert harness.get(cid).reengagement.next_touch_at == monday_opening
+
+    assert harness.run_at(anchor + 72 * H).touches == []
 
     harness.run_at(monday_opening)
     assert harness.templates == ["reminder_never_responded", "reminder_sms"]
@@ -237,14 +240,22 @@ def test_skipped_closing_step_still_closes(harness: Harness) -> None:
     assert "closing_no_response" not in harness.templates
 
 
-def test_queued_touch_records_one_event_per_opening(harness: Harness) -> None:
-    anchor = MONDAY - 2 * H
-    mx = harness.add(abandoned(anchor, phone=MX_PHONE, country=Country.MX))
+def test_a_late_pass_after_closing_queues_once(harness: Harness) -> None:
+    # Vence el martes a las 20:50 en Madrid, pero la pasada llega a las 21:05 (cerrado).
+    anchor = datetime(2026, 10, 19, 18, 50, tzinfo=UTC)
+    cid = harness.add(abandoned(anchor))
+    opening = datetime(2026, 10, 21, 9, 0, tzinfo=ZoneInfo("Europe/Madrid"))
 
-    for minutes in (0, 15, 30, 45):
-        harness.run_at(anchor + 24 * H + timedelta(minutes=minutes))
+    report = harness.run_at(anchor + 24 * H + timedelta(minutes=15))
+    assert [t.outcome for t in report.touches] == [TouchOutcome.QUEUED]
+    assert harness.get(cid).reengagement.next_touch_at == opening
 
-    assert len(harness.events(mx, "reengagement_touch_queued")) == 1
+    for minutes in (30, 45, 60):
+        assert harness.run_at(anchor + 24 * H + timedelta(minutes=minutes)).read == 0
+    assert len(harness.events(cid, "reengagement_touch_queued")) == 1
+
+    harness.run_at(opening)
+    assert harness.templates == ["reminder_abandoned"]
 
 
 # --- Pasos atrasados ----------------------------------------------------------------
@@ -503,13 +514,15 @@ def test_reply_after_the_anchor_restarts_the_cadence(harness: Harness) -> None:
     later = MONDAY + 30 * H
     candidate.last_candidate_message_at = later - timedelta(minutes=1)
     candidate.last_agent_message_at = later
-    harness.repository.save(candidate)
+    harness.repository.save(candidate)  # sin hook ni `refresh_next_touch`
 
-    harness.run_at(later + 23 * H)
+    # La ficha sale de la consulta en su hora guardada (72 h) y ahí se detecta la respuesta.
+    harness.run_at(MONDAY + 71 * H)
     assert harness.templates == ["reminder_abandoned"]
-    harness.run_at(later + 24 * H)
+    harness.run_at(MONDAY + 72 * H)
     assert harness.templates == ["reminder_abandoned", "reminder_abandoned"]
     assert len(harness.events(cid, "reengagement_started")) == 2
+    assert harness.get(cid).reengagement.next_touch_at == later + 72 * H
 
 
 def test_run_due_touches_with_empty_repository(harness: Harness) -> None:

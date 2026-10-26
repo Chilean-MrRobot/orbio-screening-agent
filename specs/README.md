@@ -23,6 +23,7 @@ Cada feature parte con una spec aquí, **antes** de escribir tests o código. Or
 | 014 | Clasificador de emoción | 3 |
 | 015 | Lease por candidato en el orquestador | 4 |
 | 016 | Agrupación de mensajes con Cloud Tasks | 4 |
+| 017 | Calentamiento por índice | 4 |
 | 018 | Panel paginado y una sola contraseña | 4 |
 
 ## Plantilla
