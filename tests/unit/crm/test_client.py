@@ -30,12 +30,12 @@ def client_for(response: httpx.Response) -> tuple[CrmClient, Recorder]:
     return CrmClient(BASE, "tok", transport=httpx.MockTransport(recorder)), recorder
 
 
-def test_list_candidates_sends_token_and_filters() -> None:
+def test_list_candidates_sends_password_and_filters() -> None:
     candidate = make_candidate(status=CandidateStatus.QUALIFIED, score=80)
-    payload = [to_row(candidate).model_dump(mode="json")]
+    payload = {"items": [to_row(candidate).model_dump(mode="json")], "next_cursor": "abc"}
     client, recorder = client_for(httpx.Response(200, json=payload))
 
-    rows = client.list_candidates(
+    page = client.list_candidates(
         statuses=[CandidateStatus.QUALIFIED, CandidateStatus.INTERVIEW], country=Country.MX
     )
 
@@ -45,8 +45,34 @@ def test_list_candidates_sends_token_and_filters() -> None:
     assert request.url.params.get_list("status") == ["qualified", "interview"]
     assert request.url.params["country"] == "MX"
     assert "stage" not in request.url.params
-    assert rows[0].id == candidate.id
-    assert rows[0].score == 80
+    assert "cursor" not in request.url.params
+    assert page.items[0].id == candidate.id
+    assert page.items[0].score == 80
+    assert page.next_cursor == "abc"
+
+
+def test_list_candidates_sends_the_page_parameters() -> None:
+    client, recorder = client_for(httpx.Response(200, json={"items": [], "next_cursor": None}))
+
+    page = client.list_candidates(order="updated_desc", limit=25, cursor="abc")
+
+    params = recorder.requests[0].url.params
+    assert params["order"] == "updated_desc"
+    assert params["limit"] == "25"
+    assert params["cursor"] == "abc"
+    assert page.items == []
+    assert page.next_cursor is None
+
+
+def test_counts() -> None:
+    body = {"total": 3, "by_status": {s.value: 0 for s in CandidateStatus} | {"new": 3}}
+    client, recorder = client_for(httpx.Response(200, json=body))
+
+    counts = client.counts()
+
+    assert recorder.requests[0].url.path == "/crm/counts"
+    assert counts.total == 3
+    assert counts.by_status[CandidateStatus.NEW] == 3
 
 
 def test_get_candidate_parses_the_full_record() -> None:
@@ -115,10 +141,16 @@ def test_connection_errors_become_crm_api_error() -> None:
     assert error.value.status_code is None
 
 
-def test_from_env() -> None:
-    client = CrmClient.from_env({"CRM_API_URL": "http://x:8000/", "CRM_API_TOKEN": "t"})
+def test_from_env_uses_the_panel_password_as_bearer() -> None:
+    recorder = Recorder(httpx.Response(200, json={"total": 0, "by_status": {}}))
+    env = {"PANEL_API_URL": "http://x:8000/", "PANEL_PASSWORD": "p"}
+
+    client = CrmClient.from_env(env, transport=httpx.MockTransport(recorder))
+    client.counts()
 
     assert client.base_url == "http://x:8000"
+    assert recorder.requests[0].headers["Authorization"] == "Bearer p"
+    assert str(recorder.requests[0].url).startswith("http://x:8000/crm/")
 
-    with pytest.raises(ValueError, match="CRM_API_TOKEN"):
-        CrmClient.from_env({"CRM_API_URL": "http://x"})
+    with pytest.raises(ValueError, match="PANEL_PASSWORD"):
+        CrmClient.from_env({"PANEL_API_URL": "http://x", "CRM_API_TOKEN": "t"})

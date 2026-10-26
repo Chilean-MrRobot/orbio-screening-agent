@@ -22,6 +22,7 @@ Cada feature parte con una spec aquí, **antes** de escribir tests o código. Or
 | 013 | CRM (Streamlit) | 3 |
 | 014 | Clasificador de emoción | 3 |
 | 015 | Lease por candidato en el orquestador | 4 |
+| 018 | Panel paginado y una sola contraseña | 4 |
 
 ## Plantilla
 

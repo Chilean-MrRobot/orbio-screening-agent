@@ -1,4 +1,4 @@
-"""Cliente HTTP de la API del CRM: lo que usa la app de Streamlit (spec 013)."""
+"""Cliente HTTP de la API del panel: lo que usa la app de Streamlit (spec 013 y 018)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,16 @@ from typing import Any
 
 import httpx
 
-from screening.crm.listing import CandidateRow
-from screening.crm.metrics import CrmMetrics
+from screening.crm.listing import CandidateRowPage
+from screening.crm.metrics import CrmMetrics, StatusCounts
 from screening.domain import Candidate, CandidateStatus, Country, Stage
+from screening.ports import CandidateOrder
 
 CRM_PATH = "/crm"
 DEFAULT_API_URL = "http://localhost:8000"
+# Una sola contraseña: entra al panel y es el bearer hacia la API.
+PASSWORD_ENV = "PANEL_PASSWORD"
+API_URL_ENV = "PANEL_API_URL"
 
 
 class CrmApiError(Exception):
@@ -29,7 +33,7 @@ class CrmClient:
     def __init__(
         self,
         base_url: str,
-        token: str,
+        password: str,
         *,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
@@ -37,17 +41,19 @@ class CrmClient:
         self.base_url = base_url.rstrip("/")
         self._http = httpx.Client(
             base_url=f"{self.base_url}{CRM_PATH}",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {password}"},
             transport=transport,
             timeout=timeout,
         )
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] = os.environ) -> CrmClient:
-        token = env.get("CRM_API_TOKEN")
-        if not token:
-            raise ValueError("Falta la variable de entorno CRM_API_TOKEN")
-        return cls(env.get("CRM_API_URL") or DEFAULT_API_URL, token)
+    def from_env(
+        cls, env: Mapping[str, str] = os.environ, *, transport: httpx.BaseTransport | None = None
+    ) -> CrmClient:
+        password = env.get(PASSWORD_ENV)
+        if not password:
+            raise ValueError(f"Falta la variable de entorno {PASSWORD_ENV}")
+        return cls(env.get(API_URL_ENV) or DEFAULT_API_URL, password, transport=transport)
 
     def list_candidates(
         self,
@@ -55,14 +61,25 @@ class CrmClient:
         statuses: Iterable[CandidateStatus] | None = None,
         country: Country | None = None,
         stage: Stage | None = None,
-    ) -> list[CandidateRow]:
+        order: CandidateOrder | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> CandidateRowPage:
         params: list[tuple[str, str]] = [("status", s.value) for s in statuses or []]
         if country is not None:
             params.append(("country", country.value))
         if stage is not None:
             params.append(("stage", stage.value))
-        data = self._request("GET", "/candidates", params=params)
-        return [CandidateRow.model_validate(item) for item in data]
+        if order is not None:
+            params.append(("order", order))
+        if limit is not None:
+            params.append(("limit", str(limit)))
+        if cursor is not None:
+            params.append(("cursor", cursor))
+        return CandidateRowPage.model_validate(self._request("GET", "/candidates", params=params))
+
+    def counts(self) -> StatusCounts:
+        return StatusCounts.model_validate(self._request("GET", "/counts"))
 
     def get_candidate(self, candidate_id: str) -> Candidate:
         return Candidate.model_validate(self._request("GET", f"/candidates/{candidate_id}"))
