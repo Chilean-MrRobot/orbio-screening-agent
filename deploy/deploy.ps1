@@ -48,6 +48,7 @@ if ($Only -in "all", "api") {
         "FIRESTORE_PROJECT=$Project",
         "LANGSMITH_TRACING=$tracing",
         "LANGSMITH_PROJECT=orbio-screening-agent",
+        "LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com",
         "PANEL_METRICS_WINDOW=1000",
         "REENGAGEMENT_MAX_PER_PASS=1000"
     )
