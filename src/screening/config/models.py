@@ -5,11 +5,20 @@ Ver `specs/001-configuracion-yaml.md`.
 
 from __future__ import annotations
 
+from datetime import time
 from typing import Any, Literal, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from screening.domain import ChannelName, Country, Language, ScreeningData, Stage, VehicleType
+from screening.domain import (
+    ChannelName,
+    Country,
+    InterviewModality,
+    Language,
+    ScreeningData,
+    Stage,
+    VehicleType,
+)
 
 Operator = Literal[
     "equals",
@@ -268,6 +277,83 @@ class CadencesConfig(StrictModel):
         return self
 
 
+# --- Agendamiento de entrevistas (spec 021) ---------------------------------------
+
+# Plantillas que usa el código del agendamiento; deben existir si está configurado.
+SCHEDULING_TEMPLATES = (
+    "interview_offer",
+    "interview_offer_more",
+    "interview_offer_retry",
+    "interview_slot_taken",
+    "interview_confirmed",
+    "interview_manual",
+    "interview_place_video",
+    "interview_place_in_person",
+)
+
+
+class InterviewWindow(StrictModel):
+    """Franja de entrevistas en hora local de la región, p. ej. 10:00–13:00."""
+
+    start: time
+    end: time
+
+    @model_validator(mode="after")
+    def _check_range(self) -> InterviewWindow:
+        if self.start >= self.end:
+            raise ValueError("la ventana debe empezar antes de terminar")
+        return self
+
+
+class CountryScheduling(StrictModel):
+    days: list[int] = Field(min_length=1, description="1=lunes … 7=domingo")
+    windows: list[InterviewWindow] = Field(min_length=1)
+    modality: InterviewModality
+    timezone_label: dict[Language, str]
+    locations: dict[str, str] = Field(
+        default_factory=dict, description="Ciudad de servicio → dirección del local."
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> CountryScheduling:
+        if any(not 1 <= d <= 7 for d in self.days):
+            raise ValueError("los días deben estar entre 1 (lunes) y 7 (domingo)")
+        missing = set(Language) - set(self.timezone_label)
+        if missing:
+            raise ValueError(f"a timezone_label le faltan idiomas: {sorted(missing)}")
+        return self
+
+
+class SchedulingConfig(StrictModel):
+    enabled: bool = True
+    slot_minutes: int = Field(gt=0, le=240)
+    min_notice_hours: float = Field(ge=0)
+    horizon_days: int = Field(gt=0, le=60)
+    options_per_offer: int = Field(ge=1, le=9)
+    max_rejections: int = Field(ge=1)
+    countries: dict[Country, CountryScheduling]
+    reengagement_templates: dict[str, str] = Field(
+        default_factory=dict,
+        description="Plantilla de la cadencia → la que se usa mientras espera la elección.",
+    )
+
+    @model_validator(mode="after")
+    def _check_windows(self) -> SchedulingConfig:
+        for country, spec in self.countries.items():
+            for window in spec.windows:
+                minutes = _minutes(window.end) - _minutes(window.start)
+                if minutes < self.slot_minutes:
+                    raise ValueError(
+                        f"la ventana {window.start}-{window.end} de {country} no alcanza "
+                        f"para un horario de {self.slot_minutes} min"
+                    )
+        return self
+
+
+def _minutes(value: time) -> int:
+    return value.hour * 60 + value.minute
+
+
 # --- Raíz -------------------------------------------------------------------------
 
 
@@ -279,6 +365,7 @@ class AppConfig(StrictModel):
     scoring: ScoringConfig
     cadences: CadencesConfig
     templates: dict[str, dict[Language, str]]
+    scheduling: SchedulingConfig | None = None  # sin `scheduling.yaml`, desactivado
 
     @model_validator(mode="after")
     def _check_references(self) -> AppConfig:
@@ -297,7 +384,30 @@ class AppConfig(StrictModel):
 
         referenced = {r.message_template for r in self.knockout_rules}
         referenced |= {s.template for c in self.cadences.cadences for s in c.steps}
+        if self.scheduling is not None:
+            self._check_scheduling(self.scheduling)
+            referenced |= set(SCHEDULING_TEMPLATES)
+            referenced |= set(self.scheduling.reengagement_templates.values())
         unknown = sorted(referenced - set(self.templates))
         if unknown:
             raise ValueError(f"plantillas referenciadas que no existen: {unknown}")
         return self
+
+    def _check_scheduling(self, scheduling: SchedulingConfig) -> None:
+        cadence_templates = {s.template for c in self.cadences.cadences for s in c.steps}
+        unknown = sorted(set(scheduling.reengagement_templates) - cadence_templates)
+        if unknown:
+            raise ValueError(f"reengagement_templates no son plantillas de cadencias: {unknown}")
+        for country, spec in scheduling.countries.items():
+            region = self.regions.get(country)
+            if region is None:
+                raise ValueError(f"el agendamiento configura {country}, que no tiene región")
+            if spec.modality != InterviewModality.IN_PERSON:
+                continue
+            cities = {c.name for c in region.cities}
+            missing = sorted(cities - set(spec.locations))
+            if missing:
+                raise ValueError(f"entrevistas presenciales en {country} sin dirección: {missing}")
+            extra = sorted(set(spec.locations) - cities)
+            if extra:
+                raise ValueError(f"direcciones de ciudades que no son de servicio: {extra}")

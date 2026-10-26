@@ -42,6 +42,18 @@ class FakeDocument:
             raise NotFound(f"{self.id} no existe")
         self._store[self.id].update(copy.deepcopy(data))
 
+    def delete(self) -> None:
+        self._store.pop(self.id, None)
+
+
+_OPERATORS = {
+    "==": lambda a, b: a == b,
+    ">=": lambda a, b: a is not None and a >= b,
+    ">": lambda a, b: a is not None and a > b,
+    "<=": lambda a, b: a is not None and a <= b,
+    "<": lambda a, b: a is not None and a < b,
+}
+
 
 class FakeQuery:
     def __init__(self, store: dict[str, dict[str, Any]], filters: list[Any], limit: int | None):
@@ -50,7 +62,7 @@ class FakeQuery:
         self._limit = limit
 
     def where(self, *, filter: Any) -> FakeQuery:
-        assert filter.op_string == "=="
+        assert filter.op_string in _OPERATORS
         return FakeQuery(self._store, [*self._filters, filter], self._limit)
 
     def limit(self, count: int) -> FakeQuery:
@@ -60,7 +72,7 @@ class FakeQuery:
         matches = [
             FakeSnapshot(doc_id, copy.deepcopy(data))
             for doc_id, data in self._store.items()
-            if all(data.get(f.field_path) == f.value for f in self._filters)
+            if all(_OPERATORS[f.op_string](data.get(f.field_path), f.value) for f in self._filters)
         ]
         return matches[: self._limit] if self._limit is not None else matches
 

@@ -14,6 +14,7 @@ from screening.domain import (
     Candidate,
     ChannelName,
     Country,
+    InterviewSlot,
     Language,
     Message,
     MessageRole,
@@ -173,3 +174,53 @@ def test_turn_instructions_with_nothing_to_ask(candidate: Candidate) -> None:
     text = build_turn_instructions(_request(candidate), today=date(2026, 10, 23))
 
     assert "No hay nada que preguntar" in text
+
+
+# --- Agendamiento (spec 021) ------------------------------------------------------
+
+
+def test_extraction_input_lists_offered_slots_in_local_time(
+    candidate: Candidate, app_config: AppConfig
+) -> None:
+    candidate.stage = Stage.SCHEDULING
+    candidate.scheduling.offered = [
+        InterviewSlot(
+            start=datetime(2026, 10, 26, 9, 0, tzinfo=UTC),
+            end=datetime(2026, 10, 26, 9, 30, tzinfo=UTC),
+        ),
+        InterviewSlot(
+            start=datetime(2026, 10, 27, 15, 0, tzinfo=UTC),
+            end=datetime(2026, 10, 27, 15, 30, tzinfo=UTC),
+        ),
+    ]
+    new = [msg(MessageRole.CANDIDATE, "el martes")]
+
+    def build(expected: list[str]) -> str:
+        return build_extraction_input(
+            candidate,
+            new,
+            expected,
+            region=app_config.regions[Country.ES],
+            today=date(2026, 10, 23),
+            agent_name="Sofía",
+            history_limit=20,
+        )
+
+    text = build(["interview_slot"])
+    assert (
+        "Horarios ofrecidos (hora local): 1) 2026-10-26 (lunes) 10:00; 2) 2026-10-27 (martes) 16:00"
+    ) in text
+    assert "Horarios ofrecidos" not in build(["city"])
+
+
+def test_turn_instructions_repeat_the_interview_options(candidate: Candidate) -> None:
+    options = ["1) lunes 26 de octubre, 10:00", "2) martes 27 de octubre, 16:00"]
+
+    text = build_turn_instructions(
+        _request(candidate, question="¿Es presencial?", interview_options=options),
+        today=date(2026, 10, 23),
+    )
+
+    assert '"¿Es presencial?"' in text
+    assert "1) lunes 26 de octubre, 10:00; 2) martes 27 de octubre, 16:00" in text
+    assert "No hay nada que preguntar" not in text

@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from pydantic import SecretStr
 
 from screening.adapters.llm_pricing import PricingTable, load_pricing
+from screening.adapters.memory import InMemoryInterviewSlotStore
 from screening.api.app import create_app
 from screening.api.crm import build_crm_router
 from screening.api.settings import WhatsAppSettings
@@ -37,6 +38,7 @@ from screening.ports import (
     ReplyOutcome,
     ReplyRequest,
 )
+from screening.scheduling import InterviewScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,8 @@ class DemoTurn:
     confirm: bool = False
     human: bool = False
     opt_out: bool = False
+    slot_choice: int | None = None  # spec 021: número del horario ofrecido que elige
+    reject_slots: bool = False
 
 
 @dataclass(frozen=True)
@@ -137,8 +141,9 @@ DEMO_SCENARIOS: tuple[DemoScenario, ...] = (
                 start_in_days=3,
             ),
             CONFIRM,
+            DemoTurn("El segundo me viene perfecto", slot_choice=2),
         ),
-        (RecruiterStep(CandidateStatus.INTERVIEW),),
+        (),
         CandidateStatus.INTERVIEW,
     ),
     DemoScenario(
@@ -228,6 +233,8 @@ DEMO_SCENARIOS: tuple[DemoScenario, ...] = (
                 start_in_days=21,
             ),
             CONFIRM,
+            DemoTurn("Ninguno me sirve, trabajo entre semana", reject_slots=True),
+            DemoTurn("Tampoco puedo en esos, ¿no hay sábados?", reject_slots=True),
         ),
     ),
     DemoScenario(
@@ -386,6 +393,8 @@ class DemoAgent:
                 outcome.provided_fields.append(CONFIRMATION_FIELD)
             outcome.human_requested |= turn.human
             outcome.opt_out |= turn.opt_out
+            outcome.slot_choice = turn.slot_choice or outcome.slot_choice
+            outcome.slots_rejected |= turn.reject_slots
         outcome.updates = ScreeningData.model_validate(fields)
         outcome.provided_fields.extend(fields)
         prompt = "\n".join(m.text for m in new_messages)
@@ -520,12 +529,14 @@ def create_demo_app(env: Mapping[str, str] | None = None) -> FastAPI:
     config = load_config()
     clock = SystemClock()
     repository, store = build_storage(values)
+    scheduler = InterviewScheduler(config, InMemoryInterviewSlotStore(), clock)
     orchestrator = ConversationOrchestrator(
         repository=repository,
         agent=DemoAgent(config, clock),
         channel=ConsoleChannel(),
         clock=clock,
         config=config,
+        scheduler=scheduler,
     )
     return create_app(
         settings,
@@ -533,5 +544,7 @@ def create_demo_app(env: Mapping[str, str] | None = None) -> FastAPI:
         handler=orchestrator,
         clock=clock,
         applications=orchestrator,
-        crm_router=build_crm_router(repository, clock, values["PANEL_PASSWORD"]),
+        crm_router=build_crm_router(
+            repository, clock, values["PANEL_PASSWORD"], scheduler=scheduler
+        ),
     )

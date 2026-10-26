@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from screening.crm import views
 from screening.crm.chat_page import chat_page
 from screening.crm.client import PASSWORD_ENV, CrmApiError, CrmClient
+from screening.crm.interviews import BOOKABLE_STATUSES
 from screening.crm.listing import CandidateRowPage
 from screening.crm.pagination import Pager
 from screening.crm.transitions import allowed_targets
@@ -211,6 +212,7 @@ def candidate_detail(candidate_id: str) -> None:
     with st.container(border=True):
         header(candidate)
         actions(candidate)
+        interview_section(candidate)
         tabs = st.tabs(
             ["💬 Conversación", "🧾 Datos extraídos", "✅ Evaluación", "📝 Resumen", "🕒 Timeline"]
         )
@@ -280,6 +282,53 @@ def change_status(candidate: Candidate, target: CandidateStatus, reason: str | N
         st.error(f"No se pudo cambiar el estado: {e.detail}")
         return
     st.toast(f"{candidate.application.full_name or 'Candidato'} → {views.STATUS_LABELS[target]}")
+    st.rerun()
+
+
+def interview_section(candidate: Candidate) -> None:
+    """Entrevista agendada y acciones para agendar, reagendar o cancelar (spec 021)."""
+    details = views.interview_details(candidate)
+    note = views.manual_scheduling_note(candidate)
+    bookable = candidate.status in BOOKABLE_STATUSES
+    if not details and not note and not bookable:
+        return
+    st.markdown("**📅 Entrevista**")
+    if details:
+        st.dataframe(details, hide_index=True, width="stretch")
+    elif note:
+        st.warning(note)
+    elif candidate.stage == Stage.SCHEDULING:
+        st.caption("Sofía le ofreció horarios por chat; esperando su elección.")
+    if not bookable:
+        return
+
+    left, right = st.columns(2)
+    with left.popover("🔁 Reagendar" if details else "📅 Agendar", width="stretch"):
+        slots = call_api(get_client().free_slots, candidate.id) or []
+        if not slots:
+            st.caption("No hay horarios libres en la configuración de agendamiento.")
+        else:
+            labels = {s.start.isoformat(): f"{s.label} ({s.timezone})" for s in slots}
+            chosen = st.selectbox(
+                "Horario", list(labels), format_func=labels.__getitem__, key=f"slot-{candidate.id}"
+            )
+            if st.button("Confirmar horario", type="primary", key=f"book-{candidate.id}"):
+                slot = next(s for s in slots if s.start.isoformat() == chosen)
+                change_interview(candidate, get_client().book_interview, slot.start)
+    if details and right.button(
+        "❌ Cancelar entrevista", width="stretch", key=f"cancel-{candidate.id}"
+    ):
+        change_interview(candidate, get_client().cancel_interview)
+
+
+def change_interview(candidate: Candidate, action: Callable[..., Any], *args: Any) -> None:
+    recruiter = st.session_state.get("recruiter") or None
+    try:
+        action(candidate.id, *args, recruiter=recruiter)
+    except CrmApiError as e:
+        st.error(f"No se pudo cambiar la entrevista: {e.detail}")
+        return
+    st.toast("Entrevista actualizada")
     st.rerun()
 
 

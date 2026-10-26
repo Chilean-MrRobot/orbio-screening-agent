@@ -1,7 +1,8 @@
-"""Punta a punta sin red: intake → orquestador → agente ADK real (modelo guionado) → calificado."""
+"""Punta a punta sin red: intake → orquestador → agente ADK real (modelo guionado) → entrevista."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from screening.adapters.fake_knowledge import FakeKnowledgeBase
@@ -32,7 +33,12 @@ NO_FIELDS: dict[str, Any] = {
 }
 
 
-def extraction(summary_confirmed: bool = False, **fields: Any) -> dict[str, Any]:
+def extraction(
+    summary_confirmed: bool = False,
+    slot_choice: int | None = None,
+    slots_rejected: bool = False,
+    **fields: Any,
+) -> dict[str, Any]:
     return {
         "fields": {**NO_FIELDS, **fields},
         "invalid_fields": [],
@@ -42,10 +48,12 @@ def extraction(summary_confirmed: bool = False, **fields: Any) -> dict[str, Any]
         "human_requested": False,
         "question": None,
         "summary_confirmed": summary_confirmed,
+        "slot_choice": slot_choice,
+        "slots_rejected": slots_rejected,
     }
 
 
-def test_application_to_qualified_with_the_adk_agent(
+def test_application_to_interview_with_the_adk_agent(
     app_config: AppConfig, clock: FixedClock, repository: InMemoryCandidateRepository
 ) -> None:
     extraction_model = ScriptedLlm(
@@ -66,6 +74,7 @@ def test_application_to_qualified_with_the_adk_agent(
                 work_permit=True,
             ),
             extraction(summary_confirmed=True),
+            extraction(slot_choice=2),
         ]
     )
     reply_model = ScriptedLlm(
@@ -96,13 +105,17 @@ def test_application_to_qualified_with_the_adk_agent(
         "tengo carnet B, coche propio y vivo en Madrid",
         "3 años en Glovo, full time, horario flexible, empiezo el sábado y tengo permiso",
         "sí, todo correcto",
+        "el segundo",
     ):
         orchestrator.handle(inbox.batch(text))
 
     candidate = repository.get_by_phone(PHONE)
     assert candidate is not None
-    assert candidate.status == CandidateStatus.QUALIFIED
+    assert candidate.status == CandidateStatus.INTERVIEW
     assert candidate.stage == Stage.DONE
+    # Jueves 22/10 10:00 UTC + 24 h de antelación; el lunes 26 ya es horario de invierno.
+    assert candidate.interview is not None
+    assert candidate.interview.start == datetime(2026, 10, 26, 9, 0, tzinfo=UTC)
     assert candidate.data.license_type == "B"
     assert candidate.score is not None and candidate.score.total == 100
     assert channel.texts[0].startswith("¡Hola Lucía! Soy Sofía")
@@ -111,5 +124,8 @@ def test_application_to_qualified_with_the_adk_agent(
         "¡Genial! ¿Cuánta experiencia tienes repartiendo y qué disponibilidad tienes?",
         "Repasemos: carnet B, coche propio, Madrid, 3 años en Glovo. ¿Está todo bien?",
     ]
-    assert channel.texts[-1].startswith("¡Listo, Lucía!")
+    offer = channel.texts[-2]
+    assert offer.startswith("¡Listo, Lucía!")
+    assert "1) viernes 23 de octubre, 12:30\n2) lunes 26 de octubre, 10:00" in offer
+    assert channel.texts[-1].startswith("¡Agendado, Lucía! ✅ Tu entrevista es el lunes 26")
     assert extraction_model.script == [] and reply_model.script == []

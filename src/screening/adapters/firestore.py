@@ -16,6 +16,7 @@ from screening.adapters.query import ORDER_FIELDS, decode_cursor, encode_cursor,
 from screening.channels import InboundMessage
 from screening.domain import Candidate, CandidateStatus
 from screening.ports import CandidatePage, CandidateQuery
+from screening.scheduling.slots import slot_id as make_slot_id
 
 if TYPE_CHECKING:
     from google.cloud import firestore
@@ -132,6 +133,48 @@ class FirestoreLeaseStore:
                 transaction.delete(ref)
 
         release(self._client.transaction())
+
+
+class FirestoreInterviewSlotStore:
+    """Implementa `InterviewSlotStore` (spec 021): un documento por horario reservado.
+
+    `create` falla si el documento existe, así que dos instancias no reservan el mismo
+    horario. `reserved_between` es un rango sobre `slot_id` (índice simple automático).
+    """
+
+    def __init__(self, client: firestore.Client, collection: str = "interview_slots") -> None:
+        self._collection = client.collection(collection)
+
+    def try_reserve(
+        self, slot_id: str, candidate_id: str, *, start: datetime, now: datetime
+    ) -> bool:
+        ref = self._collection.document(slot_id)
+        document = {
+            "slot_id": slot_id,
+            "candidate_id": candidate_id,
+            "start": start.isoformat(),
+            "reserved_at": now.isoformat(),
+        }
+        try:
+            ref.create(document)
+        except AlreadyExists:
+            snapshot = ref.get()
+            return snapshot.exists and snapshot.to_dict()["candidate_id"] == candidate_id
+        return True
+
+    def release(self, slot_id: str, candidate_id: str) -> None:
+        # Sin transacción: solo el dueño borra, y nadie más puede crear el documento mientras
+        # exista, así que entre leer y borrar no cambia de dueño.
+        ref = self._collection.document(slot_id)
+        snapshot = ref.get()
+        if snapshot.exists and snapshot.to_dict()["candidate_id"] == candidate_id:
+            ref.delete()
+
+    def reserved_between(self, scope: str, start: datetime, end: datetime) -> set[str]:
+        query = self._collection.where(
+            filter=FieldFilter("slot_id", ">=", make_slot_id(scope, start))
+        ).where(filter=FieldFilter("slot_id", "<", make_slot_id(scope, end)))
+        return {s.to_dict()["slot_id"] for s in query.stream()}
 
 
 class FirestoreInboundMessageStore:

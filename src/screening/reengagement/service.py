@@ -47,7 +47,9 @@ from screening.reengagement.schedule import (
     schedule_next_touch,
     silence_start,
     step_due_at,
+    step_template,
 )
+from screening.scheduling import awaiting_choice, mark_manual
 
 logger = logging.getLogger(__name__)
 
@@ -259,9 +261,10 @@ class _Pass:
         step: CadenceStep,
         now: datetime,
     ) -> None:
-        text = render_template(step.template, candidate, self._config)
+        template = step_template(candidate, step.template, self._config)
+        text = render_template(template, candidate, self._config)
         as_template = step.channel == ChannelName.WHATSAPP and self._window_closed(candidate, now)
-        result = self._send(candidate, step, text, as_template)
+        result = self._send(candidate, step, template, text, as_template)
         state = candidate.reengagement
 
         if result.ok:
@@ -281,7 +284,7 @@ class _Pass:
                 cadence=cadence.name,
                 step=step.name,
                 channel=step.channel,
-                template=step.template,
+                template=template,
                 external_id=result.external_id,
                 as_template=as_template,
             )
@@ -297,7 +300,7 @@ class _Pass:
                 cadence=cadence.name,
                 step=step.name,
                 channel=step.channel,
-                template=step.template,
+                template=template,
                 error=result.error,
             )
             self._record(candidate, cadence, step, TouchOutcome.FAILED, result.error)
@@ -335,7 +338,11 @@ class _Pass:
         if step.closes:
             state.next_step_index = len(cadence.steps)
             state.next_touch_at = None
-            candidate.set_status(CandidateStatus.NO_RESPONSE, now, reason="reengagement_closed")
+            if awaiting_choice(candidate):
+                # Spec 021: ya calificó; no se cierra, lo agenda el recruiter a mano.
+                mark_manual(candidate, "no_response", now)
+            else:
+                candidate.set_status(CandidateStatus.NO_RESPONSE, now, reason="reengagement_closed")
             self.report.closed.append(candidate.id)
             return
         state.next_step_index = cadence.steps.index(step) + 1
@@ -344,7 +351,7 @@ class _Pass:
     # --- Envío ------------------------------------------------------------------------
 
     def _send(
-        self, candidate: Candidate, step: CadenceStep, text: str, as_template: bool
+        self, candidate: Candidate, step: CadenceStep, template: str, text: str, as_template: bool
     ) -> SendResult:
         """Nunca lanza: una excepción del canal se devuelve como falla."""
         channel = self._channels.get(step.channel)
@@ -353,8 +360,8 @@ class _Pass:
         message = OutboundMessage(
             to=candidate.phone,
             text=text,
-            template=step.template if as_template else None,
-            template_params=self._template_params(step.template, candidate) if as_template else {},
+            template=template if as_template else None,
+            template_params=self._template_params(template, candidate) if as_template else {},
         )
         try:
             return channel.send(message)

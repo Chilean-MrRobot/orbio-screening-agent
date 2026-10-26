@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from screening.clock import Clock, FixedClock
@@ -13,9 +13,11 @@ from screening.domain import (
     Candidate,
     ChannelName,
     Country,
+    InterviewSlot,
     Language,
     Message,
     MessageRole,
+    SchedulingState,
     ScreeningData,
     Sentiment,
     Stage,
@@ -56,7 +58,14 @@ def candidate_from_input(case_input: dict[str, Any]) -> Candidate:
         data=ScreeningData.model_validate(case_input.get("data", {})),
         human_requested=case_input.get("human_requested", False),
         messages=[message(turn["role"], turn["text"]) for turn in case_input.get("history", [])],
+        scheduling=SchedulingState(offered=offered_slots(case_input)),
     )
+
+
+def offered_slots(case_input: dict[str, Any]) -> list[InterviewSlot]:
+    """`offered_slots`: inicios ISO con zona (spec 021); cada horario dura 30 min."""
+    starts = [datetime.fromisoformat(s) for s in case_input.get("offered_slots", [])]
+    return [InterviewSlot(start=s, end=s + timedelta(minutes=30)) for s in starts]
 
 
 def message(role: str, text: str) -> Message:

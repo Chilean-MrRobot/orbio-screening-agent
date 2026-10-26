@@ -28,10 +28,15 @@ class _Variables(dict[str, str]):
         return "{" + key + "}"
 
 
-def render_template(key: str, candidate: Candidate, config: AppConfig) -> str:
+def render_template(
+    key: str, candidate: Candidate, config: AppConfig, extra: dict[str, str] | None = None
+) -> str:
+    """`extra` suma variables propias del mensaje (p. ej. los horarios de la spec 021)."""
     texts = config.templates.get(key) or DEFAULT_TEMPLATES[key]
     text = texts.get(candidate.language) or texts[Language.ES]
-    return text.format_map(template_variables(candidate, config))
+    variables = template_variables(candidate, config)
+    variables.update(extra or {})
+    return text.format_map(variables)
 
 
 def template_variables(candidate: Candidate, config: AppConfig) -> dict[str, str]:

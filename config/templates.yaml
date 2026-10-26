@@ -44,3 +44,49 @@ templates:
   qualified_next_steps:
     es: "¡Listo, {first_name}! 🎉 Tu postulación quedó completa. Un reclutador de {client_name} te contactará en las próximas {sla_hours} h."
     en: "All set, {first_name}! 🎉 Your application is complete. A {client_name} recruiter will contact you within {sla_hours} hours."
+
+  # --- Agendamiento de entrevistas (spec 021) ---
+  # Variables extra: {options} {interview_time} {place} {duration} {timezone_label} {city} {address}
+  interview_offer:
+    es: "¡Listo, {first_name}! 🎉 Tu postulación quedó completa. El siguiente paso es una entrevista de {duration} min {place}. ¿Cuál de estos horarios te acomoda? ({timezone_label})\n{options}\nResponde con el número, o dime si ninguno te sirve."
+    en: "All set, {first_name}! 🎉 Your application is complete. The next step is a {duration}-minute interview {place}. Which of these times works for you? ({timezone_label})\n{options}\nReply with the number, or tell me if none of them work."
+
+  interview_offer_more:
+    es: "Sin problema, {first_name}. Te propongo otros horarios ({timezone_label}):\n{options}\n¿Alguno te sirve?"
+    en: "No problem, {first_name}. Here are some other times ({timezone_label}):\n{options}\nDoes any of them work?"
+
+  interview_offer_retry:
+    es: "Perdona, no me quedó claro cuál prefieres 🙂 Estos son los horarios ({timezone_label}):\n{options}\nResponde con el número, o dime si ninguno te sirve."
+    en: "Sorry, I didn't catch which one you prefer 🙂 These are the times ({timezone_label}):\n{options}\nReply with the number, or tell me if none of them work."
+
+  interview_slot_taken:
+    es: "Uy, {first_name}, ese horario se acaba de ocupar. Te propongo estos ({timezone_label}):\n{options}\n¿Cuál te acomoda?"
+    en: "Oops, {first_name}, that time was just taken. How about one of these ({timezone_label}):\n{options}\nWhich one works for you?"
+
+  interview_confirmed:
+    es: "¡Agendado, {first_name}! ✅ Tu entrevista es el {interview_time} ({timezone_label}), {place}. Si necesitas cambiarla, escríbenos por aquí."
+    en: "You're booked, {first_name}! ✅ Your interview is on {interview_time} ({timezone_label}), {place}. If you need to change it, just message us here."
+
+  interview_manual:
+    es: "Entendido, {first_name}. Un reclutador de {client_name} te escribirá en las próximas {sla_hours} h para coordinar un horario que te acomode."
+    en: "Got it, {first_name}. A {client_name} recruiter will reach out within {sla_hours} hours to find a time that works for you."
+
+  interview_place_video:
+    es: "por videollamada (te enviaremos el enlace antes de la entrevista)"
+    en: "by video call (we'll send you the link beforehand)"
+
+  interview_place_in_person:
+    es: "en persona en nuestro local de {city} ({address})"
+    en: "in person at our {city} location ({address})"
+
+  interview_reminder:
+    es: "¡Hola de nuevo {first_name}! Solo falta elegir el horario de tu entrevista. ¿Te sirve alguno de los que te envié?"
+    en: "Hi again {first_name}! The only thing left is to pick your interview time. Does any of the ones I sent work for you?"
+
+  interview_reminder_sms:
+    es: "{client_name}: {first_name}, tu postulación está completa y solo falta elegir el horario de la entrevista. Respóndenos por WhatsApp."
+    en: "{client_name}: {first_name}, your application is complete; just pick your interview time. Reply on WhatsApp."
+
+  interview_no_response:
+    es: "{first_name}, como no tuvimos respuesta, un reclutador de {client_name} te contactará para coordinar la entrevista."
+    en: "{first_name}, since we didn't hear back, a {client_name} recruiter will contact you to schedule the interview."

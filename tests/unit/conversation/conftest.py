@@ -141,6 +141,19 @@ def inbox(clock: FixedClock) -> Inbox:
     return Inbox(clock)
 
 
+def without_scheduling(config: AppConfig) -> AppConfig:
+    """La configuración del repo con el agendamiento (spec 021) desactivado."""
+    assert config.scheduling is not None
+    scheduling = config.scheduling.model_copy(update={"enabled": False})
+    return config.model_copy(update={"scheduling": scheduling})
+
+
+@pytest.fixture
+def scheduling_enabled() -> bool:
+    """Se sobrescribe con `@pytest.mark.parametrize("scheduling_enabled", [False])`."""
+    return True
+
+
 @pytest.fixture
 def orchestrator(
     repository: InMemoryCandidateRepository,
@@ -148,9 +161,11 @@ def orchestrator(
     channel: RecordingChannel,
     clock: FixedClock,
     app_config: AppConfig,
+    scheduling_enabled: bool,
 ) -> ConversationOrchestrator:
+    config = app_config if scheduling_enabled else without_scheduling(app_config)
     return ConversationOrchestrator(
-        repository=repository, agent=agent, channel=channel, clock=clock, config=app_config
+        repository=repository, agent=agent, channel=channel, clock=clock, config=config
     )
 
 

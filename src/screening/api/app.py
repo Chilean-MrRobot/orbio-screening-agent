@@ -28,6 +28,7 @@ from screening.api.web_chat import WebChatService, build_web_chat_router
 from screening.api.webhook import build_webhook_router
 from screening.api.wiring import (
     build_lease_store,
+    build_slot_store,
     build_storage,
     build_task_queue,
     load_agent,
@@ -46,6 +47,7 @@ from screening.conversation import ConversationOrchestrator
 from screening.domain import ChannelName
 from screening.ports import MessageChannel, ScreeningAgent
 from screening.reengagement import ReengagementService
+from screening.scheduling import InterviewScheduler
 from screening.tasks import LocalTaskQueue, Sleep, TaskQueue
 
 
@@ -120,6 +122,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
     config = load_config()
     clock = SystemClock()
     repository, store = build_storage()
+    scheduler = InterviewScheduler(config, build_slot_store(), clock)  # spec 021
 
     channel: MessageChannel = WebChatChannel()
     if settings and settings.access_token and settings.phone_number_id:
@@ -137,6 +140,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         config=config,
         summarizer=load_summarizer(config),
         leases=build_lease_store(),
+        scheduler=scheduler,
     )
     reengagement = ReengagementService(
         repository=repository,
@@ -157,7 +161,7 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
         applications=orchestrator,
         reengagement=reengagement,
         reengagement_token=SecretStr(token) if token else None,
-        crm_router=build_crm_router_from_env(repository, clock),
+        crm_router=build_crm_router_from_env(repository, clock, scheduler=scheduler),
         task_queue=task_queue,
         tasks_token=tasks_token,
         web_chat_router=build_web_chat_router(

@@ -1,5 +1,5 @@
 ---
-version: 1
+version: 2
 ---
 ## Tu tarea en este turno
 No le escribes al candidato. Lees sus **mensajes nuevos** y devuelves, en el formato estructurado pedido, solo lo que entregó o corrigió en ellos, normalizado. El resto del contexto (conversación reciente, datos ya registrados) sirve para entender a qué responde, no para repetir datos.
@@ -38,4 +38,8 @@ No pongas aquí campos que el candidato no intentó responder.
 - `opt_out`: `true` solo si pide claramente que no le escriban más o que borren su postulación ("no me escriban más", "ya no me interesa", "stop", "dame de baja").
 - `human_requested`: `true` si pide hablar con una persona, un reclutador o alguien de verdad.
 - `summary_confirmed`: `true` solo si entre los campos esperados está `summary_confirmed` (etapa de cierre: se le mostró un resumen de sus datos) y el candidato confirma que está todo bien sin corregir nada ("sí, todo correcto", "perfecto", "así es"). Si corrige algún dato, `false` y el dato corregido va en `fields`. En cualquier otra etapa, `false`.
+- `slot_choice` y `slots_rejected`: solo si entre los campos esperados está `interview_slot` (se le ofrecieron horarios de entrevista numerados, que aparecen en el contexto como "Horarios ofrecidos"). En cualquier otra etapa, `slot_choice = null` y `slots_rejected = false`.
+  - `slot_choice`: el **número** del horario que eligió (1, 2, 3…). Vale por número ("el 2", "la segunda", "la primera opción"), por día y hora ("el martes a las 10", "el jueves en la tarde" si solo hay uno ese jueves en la tarde) o por fecha ("el 29"). Si lo que dice calza con más de una opción o con ninguna, `null`.
+  - `slots_rejected`: `true` si dice que ninguno le sirve o que no puede en esos horarios ("ninguno me sirve", "no puedo en esos días", "¿no hay otro?"). Si elige uno, `false`.
+  - Si solo pregunta algo (por ejemplo "¿es presencial?") sin elegir, `slot_choice = null`, `slots_rejected = false` y la pregunta va en `question`.
 - `question`: si hace una pregunta sobre el trabajo o la empresa (sueldo, pagos, horarios, zonas, requisitos, uniforme…), escríbela breve y clara en español, lista para buscarla en la FAQ. Si no pregunta nada, `null`. "¿Qué?" o "¿cómo?" por no entender no son preguntas para la FAQ.

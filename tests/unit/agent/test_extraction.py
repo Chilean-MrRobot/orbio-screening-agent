@@ -4,7 +4,12 @@ from typing import Any
 import pytest
 from google.adk.models.llm_response import LlmResponse
 
-from screening.agent.extraction import CONFIRMATION_FIELD, ExtractionResponse, build_outcome
+from screening.agent.extraction import (
+    CONFIRMATION_FIELD,
+    SLOT_FIELD,
+    ExtractionResponse,
+    build_outcome,
+)
 from screening.domain import (
     Candidate,
     ChannelName,
@@ -51,6 +56,8 @@ def llm_output(invalid: list[str] | None = None, **fields: Any) -> dict[str, Any
         "human_requested": False,
         "question": None,
         "summary_confirmed": False,
+        "slot_choice": None,
+        "slots_rejected": False,
     }
 
 
@@ -288,3 +295,23 @@ def test_error_event_raises_llm_error(make_agent, candidate: Candidate) -> None:
 
     with pytest.raises(LLMError, match="RATE_LIMIT"):
         agent.extract(candidate, candidate_says(candidate, "hola"), [])
+
+
+# --- Agendamiento (spec 021) ------------------------------------------------------
+
+
+def scheduling(expected_fields: list[str], **signals: Any):
+    raw = llm_output() | signals
+    return build_outcome(ExtractionResponse.model_validate(raw), expected_fields=expected_fields)
+
+
+def test_slot_choice_is_kept_only_when_slots_were_offered() -> None:
+    assert scheduling([SLOT_FIELD], slot_choice=2).slot_choice == 2
+    assert scheduling(["city"], slot_choice=2).slot_choice is None
+    assert scheduling([SLOT_FIELD], slot_choice=0).slot_choice is None
+
+
+def test_slots_rejected_only_counts_without_a_choice() -> None:
+    assert scheduling([SLOT_FIELD], slots_rejected=True).slots_rejected
+    assert not scheduling([SLOT_FIELD], slots_rejected=True, slot_choice=1).slots_rejected
+    assert not scheduling(["city"], slots_rejected=True).slots_rejected

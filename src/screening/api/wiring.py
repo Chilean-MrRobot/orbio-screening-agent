@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING
 from pydantic import SecretStr
 
 from screening.adapters.fake_knowledge import FakeKnowledgeBase
-from screening.adapters.memory import InMemoryCandidateRepository, InMemoryLeaseStore
+from screening.adapters.memory import (
+    InMemoryCandidateRepository,
+    InMemoryInterviewSlotStore,
+    InMemoryLeaseStore,
+)
 from screening.channels import InboundMessageStore, InMemoryInboundMessageStore
 from screening.clock import Clock
 from screening.config import AppConfig
@@ -23,6 +27,7 @@ from screening.knowledge.index import DEFAULT_INDEX_PATH, KnowledgeIndexError, l
 from screening.ports import (
     CandidateRepository,
     ExtractionOutcome,
+    InterviewSlotStore,
     KnowledgeBase,
     LeaseStore,
     ReplyOutcome,
@@ -139,6 +144,19 @@ def build_lease_store(env: Mapping[str, str] = os.environ) -> LeaseStore:
     from screening.adapters.firestore import FirestoreLeaseStore
 
     return FirestoreLeaseStore(_firestore_client(env))
+
+
+def build_slot_store(env: Mapping[str, str] = os.environ) -> InterviewSlotStore:
+    """Reservas de horarios de entrevista (spec 021), en el mismo backend que `build_storage`."""
+    backend = (env.get("SCREENING_REPOSITORY") or "memory").lower()
+    if backend == "memory":
+        return InMemoryInterviewSlotStore()
+    if backend != "firestore":
+        raise ValueError(f"SCREENING_REPOSITORY desconocido: {backend!r} (memory o firestore)")
+
+    from screening.adapters.firestore import FirestoreInterviewSlotStore
+
+    return FirestoreInterviewSlotStore(_firestore_client(env))
 
 
 def _firestore_client(env: Mapping[str, str]) -> firestore.Client:

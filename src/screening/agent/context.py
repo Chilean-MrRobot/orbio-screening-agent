@@ -6,6 +6,7 @@ import json
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from screening.agent.extraction import SLOT_FIELD
 from screening.config import AppConfig
 from screening.config.models import RegionConfig
 from screening.domain import Candidate, Language, Message, MessageRole, Sentiment
@@ -73,6 +74,16 @@ def licenses_table(region: RegionConfig) -> str:
     )
 
 
+def offered_slots(candidate: Candidate, timezone: str) -> str:
+    """`1) 2026-10-27 (martes) 10:00; 2) ...`: fecha ISO para resolver "el martes a las 10"."""
+    zone = ZoneInfo(timezone)
+    parts = []
+    for i, slot in enumerate(candidate.scheduling.offered, start=1):
+        local = slot.start.astimezone(zone)
+        parts.append(f"{i}) {describe_date(local.date())} {local:%H:%M}")
+    return "; ".join(parts) or "(ninguno)"
+
+
 def build_extraction_input(
     candidate: Candidate,
     new_messages: list[Message],
@@ -88,12 +99,18 @@ def build_extraction_input(
     previous = conversation([m for m in candidate.messages if m.id not in new_ids], history_limit)
     history = "\n".join(_line(m, agent_name) for m in previous) or "(sin mensajes anteriores)"
     news = "\n".join(f"- {m.text.strip()}" for m in new_messages if m.text.strip())
+    slots = (
+        [f"Horarios ofrecidos (hora local): {offered_slots(candidate, region.timezone)}"]
+        if SLOT_FIELD in expected_fields
+        else []
+    )
     return "\n".join(
         [
             f"Fecha de hoy: {describe_date(today)}",
             f"País: {region.country.value}",
             f"Etapa: {candidate.stage.value}",
             f"Campos esperados en esta etapa: {', '.join(expected_fields) or '(ninguno)'}",
+            *slots,
             f"Licencias válidas del país (código y vehículos): {licenses_table(region)}",
             f"Datos ya registrados: {known_data(candidate)}",
             "",
@@ -135,6 +152,11 @@ def build_turn_instructions(request: ReplyRequest, *, today: date) -> str:
         lines.append(
             "- Haz el resumen de cierre con estos datos y pide confirmación: "
             f"{known_data(candidate)}."
+        )
+    elif request.interview_options:
+        lines.append(
+            "- Recuérdale que elija uno de estos horarios de entrevista respondiendo con el "
+            "número, o que diga si ninguno le sirve: " + "; ".join(request.interview_options) + "."
         )
     elif request.retry_fields:
         lines.append(

@@ -27,6 +27,7 @@ Cada feature parte con una spec aquí, **antes** de escribir tests o código. Or
 | 018 | Panel paginado y una sola contraseña | 4 |
 | 019 | Chat web público del demo | 5 |
 | 020 | Agente de voz en el navegador (ElevenLabs) | 6 |
+| 021 | Agendamiento de entrevistas | 6 |
 
 ## Plantilla
 

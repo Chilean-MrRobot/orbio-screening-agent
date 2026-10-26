@@ -1,0 +1,41 @@
+# Agendamiento de entrevistas (spec 021). Al calificar, Sofía ofrece horarios libres.
+# Las horas son locales de la región (`timezone` en regions/*.yaml).
+scheduling:
+  enabled: true                # false: al calificar se envía qualified_next_steps y termina
+  slot_minutes: 30             # duración de cada entrevista
+  min_notice_hours: 24         # antelación mínima entre ahora y el horario ofrecido
+  horizon_days: 14             # hasta cuántos días después de la antelación se buscan horarios
+  options_per_offer: 3         # opciones por mensaje
+  max_rejections: 2            # al segundo "ninguno me sirve", agenda el recruiter a mano
+
+  countries:
+    ES:
+      days: [1, 2, 3, 4, 5]    # lunes a viernes
+      windows:
+        - {start: "10:00", end: "13:00"}
+        - {start: "16:00", end: "18:00"}
+      modality: video          # video | in_person
+      timezone_label:
+        es: hora peninsular
+        en: Spain mainland time
+
+    MX:
+      days: [1, 2, 3, 4, 5]
+      windows:
+        - {start: "10:00", end: "14:00"}
+      modality: in_person      # en el local de la ciudad del candidato
+      timezone_label:
+        es: hora del centro de México
+        en: Mexico City time
+      locations:               # direcciones de ejemplo del demo
+        Ciudad de México: Av. Insurgentes Sur 1235, col. Del Valle
+        Guadalajara: Av. Chapultepec 480, col. Americana
+        Monterrey: Av. Constitución 300, Centro
+        Puebla: Blvd. 5 de Mayo 2100, col. Ladrillera
+        Querétaro: Av. Zaragoza 150, Centro
+
+  # Mientras espera la elección del horario, el calentamiento usa estos textos.
+  reengagement_templates:
+    reminder_abandoned: interview_reminder
+    reminder_abandoned_sms: interview_reminder_sms
+    closing_no_response: interview_no_response

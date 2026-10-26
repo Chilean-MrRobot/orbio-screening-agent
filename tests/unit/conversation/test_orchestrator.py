@@ -67,7 +67,8 @@ def advance_to_closing(
 # --- Conversación completa -------------------------------------------------------
 
 
-def test_full_conversation_ends_qualified(
+@pytest.mark.parametrize("scheduling_enabled", [False])
+def test_full_conversation_ends_qualified_without_scheduling(
     contacted: Candidate,
     orchestrator: ConversationOrchestrator,
     agent: ScriptedAgent,

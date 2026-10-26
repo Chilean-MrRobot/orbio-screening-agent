@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from screening.adapters.memory import InMemoryCandidateRepository
 from screening.channels import SimulatedSmsChannel
 from screening.clock import FixedClock
@@ -119,6 +121,7 @@ def test_opt_out_leaves_no_touch(
     assert candidate.reengagement.next_touch_at is None
 
 
+@pytest.mark.parametrize("scheduling_enabled", [False])
 def test_qualified_candidate_leaves_no_touch(
     orchestrator: ConversationOrchestrator,
     repository: InMemoryCandidateRepository,

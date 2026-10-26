@@ -76,6 +76,25 @@ class LeaseStore(Protocol):
     def release(self, key: str, owner: str) -> None: ...
 
 
+class InterviewSlotStore(Protocol):
+    """Reservas de horarios de entrevista (spec 021): un registro por horario.
+
+    `try_reserve` es atómico entre instancias: si el horario ya es de otro candidato
+    devuelve False; si ya es del mismo, True (reintento idempotente). Los `slot_id` de un
+    `scope` (el país) empiezan por `"{scope}_"` y ordenan como sus horas de inicio.
+    """
+
+    def try_reserve(
+        self, slot_id: str, candidate_id: str, *, start: datetime, now: datetime
+    ) -> bool: ...
+
+    def release(self, slot_id: str, candidate_id: str) -> None: ...
+
+    def reserved_between(self, scope: str, start: datetime, end: datetime) -> set[str]:
+        """`slot_id` reservados del `scope` con inicio en [start, end)."""
+        ...
+
+
 # --- LLM --------------------------------------------------------------------------
 
 
@@ -197,6 +216,12 @@ class ExtractionOutcome(BaseModel):
     question: str | None = Field(
         default=None, description="Pregunta del candidato para responder con la FAQ."
     )
+    slot_choice: int | None = Field(
+        default=None, description="Spec 021: número (desde 1) del horario ofrecido que eligió."
+    )
+    slots_rejected: bool = Field(
+        default=False, description="Spec 021: dijo que ninguno de los horarios le sirve."
+    )
     usage: list[LLMUsage] = Field(default_factory=list)
 
 
@@ -214,6 +239,10 @@ class ReplyRequest(BaseModel):
     question: str | None = None
     closing_summary: bool = Field(
         default=False, description="Etapa de cierre: resumir los datos y pedir confirmación."
+    )
+    interview_options: list[str] = Field(
+        default_factory=list,
+        description="Spec 021: horarios ofrecidos, ya formateados, para recordarlos.",
     )
 
 

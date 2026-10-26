@@ -1,7 +1,8 @@
 """Objetivo de la suite `extraction`: mensajes del candidato + etapa → campos extraídos.
 
 `input`: `today`, `country`, `stage`, `messages` y opcionalmente `name`, `language`, `data`,
-`history` (`[{role, text}]`) y `expected_fields`. La respuesta es el JSON de lo extraído.
+`history` (`[{role, text}]`), `expected_fields` y `offered_slots` (spec 021: inicios ISO de
+los horarios ofrecidos). La respuesta es el JSON de lo extraído.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from evals.targets.common import (
     total_usage,
 )
 from screening.adapters.fake_knowledge import FakeKnowledgeBase
-from screening.agent.extraction import CONFIRMATION_FIELD
+from screening.agent.extraction import CONFIRMATION_FIELD, SLOT_FIELD
 from screening.config import AppConfig
 from screening.ports import ExtractionOutcome, LLMClient
 
@@ -34,13 +35,24 @@ def make_target(
         candidate.messages.extend(new_messages)
         agent = agent_factory(config, clock_for(case.input), FakeKnowledgeBase())
         outcome = agent.extract(candidate, new_messages, case.input.get("expected_fields", []))
-        return TargetOutput(answer=render(outcome), usage=total_usage(outcome.usage))
+        scheduling = SLOT_FIELD in case.input.get("expected_fields", [])
+        return TargetOutput(
+            answer=render(outcome, scheduling=scheduling), usage=total_usage(outcome.usage)
+        )
 
     return target
 
 
-def render(outcome: ExtractionOutcome) -> str:
-    """Lo que ve el juez: solo lo extraído y las señales, sin el uso."""
+def render(outcome: ExtractionOutcome, *, scheduling: bool = False) -> str:
+    """Lo que ve el juez: solo lo extraído y las señales, sin el uso.
+
+    Con horarios ofrecidos (spec 021) se suman `slot_choice` y `slots_rejected`.
+    """
+    slots = (
+        {"slot_choice": outcome.slot_choice, "slots_rejected": outcome.slots_rejected}
+        if scheduling
+        else {}
+    )
     return json.dumps(
         {
             "updates": outcome.updates.model_dump(
@@ -53,6 +65,7 @@ def render(outcome: ExtractionOutcome) -> str:
             "human_requested": outcome.human_requested,
             "question": outcome.question,
             "summary_confirmed": CONFIRMATION_FIELD in outcome.provided_fields,
+            **slots,
         },
         ensure_ascii=False,
     )

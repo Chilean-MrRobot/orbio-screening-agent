@@ -135,3 +135,76 @@ def test_equals_accepts_falsy_value() -> None:
 )
 def test_field_path_exists(path: str, expected: bool) -> None:
     assert field_path_exists(path) is expected
+
+
+# --- Agendamiento (spec 021) ------------------------------------------------------
+
+
+def test_repo_scheduling_config_is_valid(app_config: AppConfig) -> None:
+    scheduling = app_config.scheduling
+    assert scheduling is not None and scheduling.enabled
+    assert scheduling.options_per_offer == 3 and scheduling.min_notice_hours == 24
+    assert set(scheduling.countries) == {Country.ES, Country.MX}
+    assert set(scheduling.countries[Country.MX].locations) == {
+        c.name for c in app_config.regions[Country.MX].cities
+    }
+
+
+def test_without_scheduling_file_it_is_disabled(config_dir: Path) -> None:
+    (config_dir / "scheduling.yaml").unlink()
+
+    assert load_config(config_dir).scheduling is None
+
+
+def test_in_person_scheduling_needs_every_city_location(config_dir: Path) -> None:
+    _edit_yaml(
+        config_dir / "scheduling.yaml",
+        lambda d: d["scheduling"]["countries"]["MX"]["locations"].pop("Puebla"),
+    )
+
+    with pytest.raises(ConfigError, match="sin dirección: \['Puebla'\]"):
+        load_config(config_dir)
+
+
+def test_scheduling_window_must_fit_a_slot(config_dir: Path) -> None:
+    def edit(data):
+        data["scheduling"]["countries"]["ES"]["windows"] = [{"start": "10:00", "end": "10:15"}]
+
+    _edit_yaml(config_dir / "scheduling.yaml", edit)
+
+    with pytest.raises(ConfigError, match="no alcanza"):
+        load_config(config_dir)
+
+
+def test_scheduling_window_must_start_before_it_ends(config_dir: Path) -> None:
+    def edit(data):
+        data["scheduling"]["countries"]["ES"]["windows"] = [{"start": "13:00", "end": "10:00"}]
+
+    _edit_yaml(config_dir / "scheduling.yaml", edit)
+
+    with pytest.raises(ConfigError, match="empezar antes de terminar"):
+        load_config(config_dir)
+
+
+def test_scheduling_templates_must_exist(config_dir: Path) -> None:
+    _edit_yaml(config_dir / "templates.yaml", lambda d: d["templates"].pop("interview_confirmed"))
+
+    with pytest.raises(ConfigError, match="interview_confirmed"):
+        load_config(config_dir)
+
+
+def test_scheduling_reengagement_templates_must_be_cadence_templates(config_dir: Path) -> None:
+    _edit_yaml(
+        config_dir / "scheduling.yaml",
+        lambda d: d["scheduling"]["reengagement_templates"].update(nope="interview_reminder"),
+    )
+
+    with pytest.raises(ConfigError, match="nope"):
+        load_config(config_dir)
+
+
+def test_scheduling_country_needs_a_region(config_dir: Path) -> None:
+    (config_dir / "regions" / "mx.yaml").unlink()
+
+    with pytest.raises(ConfigError, match="MX, que no tiene región"):
+        load_config(config_dir)

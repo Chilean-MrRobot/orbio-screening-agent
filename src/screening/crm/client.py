@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from typing import Any
 
 import httpx
 
+from screening.crm.interviews import SlotOption
 from screening.crm.listing import CandidateRowPage
 from screening.crm.metrics import CrmMetrics, StatusCounts
 from screening.domain import Candidate, CandidateStatus, Country, Stage
@@ -96,8 +98,26 @@ class CrmClient:
         data = self._request("POST", f"/candidates/{candidate_id}/status", json=body)
         return Candidate.model_validate(data)
 
+    def free_slots(self, candidate_id: str, *, limit: int | None = None) -> list[SlotOption]:
+        params = {"limit": str(limit)} if limit is not None else None
+        data = self._request("GET", f"/candidates/{candidate_id}/slots", params=params)
+        return [SlotOption.model_validate(item) for item in data]
+
+    def book_interview(
+        self, candidate_id: str, start: datetime, *, recruiter: str | None = None
+    ) -> Candidate:
+        body = {"action": "book", "start": start.isoformat(), "recruiter": recruiter}
+        return self._change_interview(candidate_id, body)
+
+    def cancel_interview(self, candidate_id: str, *, recruiter: str | None = None) -> Candidate:
+        return self._change_interview(candidate_id, {"action": "cancel", "recruiter": recruiter})
+
     def metrics(self) -> CrmMetrics:
         return CrmMetrics.model_validate(self._request("GET", "/metrics"))
+
+    def _change_interview(self, candidate_id: str, body: dict[str, Any]) -> Candidate:
+        data = self._request("POST", f"/candidates/{candidate_id}/interview", json=body)
+        return Candidate.model_validate(data)
 
     def close(self) -> None:
         self._http.close()

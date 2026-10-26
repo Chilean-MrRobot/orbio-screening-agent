@@ -160,6 +160,7 @@ def test_metric_series_use_readable_labels() -> None:
         "Requisitos": 1,
         "Perfil": 0,
         "Cierre": 0,
+        "Agendamiento": 0,
     }
     assert views.reason_counts(metrics) == {
         "Sin licencia vigente": 1,

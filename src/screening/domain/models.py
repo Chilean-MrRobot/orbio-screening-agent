@@ -35,6 +35,7 @@ class Stage(StrEnum):
     KNOCKOUT = "knockout"
     PROFILE = "profile"
     CLOSING = "closing"
+    SCHEDULING = "scheduling"  # spec 021: calificado, eligiendo horario de entrevista
     DONE = "done"
 
 
@@ -177,6 +178,45 @@ class ReengagementState(BaseModel):
     touches_sent: int = 0
 
 
+class InterviewModality(StrEnum):
+    VIDEO = "video"
+    IN_PERSON = "in_person"
+
+
+class InterviewSlot(BaseModel):
+    """Horario de entrevista, en UTC (spec 021)."""
+
+    start: datetime
+    end: datetime
+
+
+class Interview(BaseModel):
+    """Entrevista agendada: lo que muestra el panel y confirma el mensaje al candidato."""
+
+    slot_id: str = Field(description="Documento de la reserva del horario.")
+    start: datetime
+    end: datetime
+    timezone: str = Field(description="Zona horaria para mostrar la hora local.")
+    modality: InterviewModality
+    location: str | None = Field(default=None, description="Dirección, si es presencial.")
+    booked_at: datetime
+    booked_by: str = Field(description="`agent` o el nombre del recruiter.")
+
+
+class SchedulingState(BaseModel):
+    offered: list[InterviewSlot] = Field(
+        default_factory=list, description="Oferta vigente, en el orden mostrado."
+    )
+    declined: list[InterviewSlot] = Field(
+        default_factory=list, description="Horarios rechazados: no se vuelven a ofrecer."
+    )
+    rejections: int = 0
+    manual_required: bool = Field(
+        default=False, description="El recruiter debe agendar la entrevista a mano."
+    )
+    manual_reason: str | None = None
+
+
 class Candidate(BaseModel):
     """Ficha del candidato: lo que se persiste y lo que lee el CRM."""
 
@@ -195,6 +235,8 @@ class Candidate(BaseModel):
     summary: str | None = None
     human_requested: bool = False
     reengagement: ReengagementState = Field(default_factory=ReengagementState)
+    interview: Interview | None = None
+    scheduling: SchedulingState = Field(default_factory=SchedulingState)
     timeline: list[TimelineEvent] = Field(default_factory=list)
     last_candidate_message_at: datetime | None = None
     last_agent_message_at: datetime | None = None

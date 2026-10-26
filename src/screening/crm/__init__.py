@@ -3,6 +3,13 @@
 Este paquete no importa Streamlit: la app (`app.py`) se corre con `streamlit run`.
 """
 
+from screening.crm.interviews import (
+    InterviewChangeRequest,
+    SlotOption,
+    SlotUnavailableError,
+    apply_interview_change,
+    slot_options,
+)
 from screening.crm.listing import (
     CandidateRow,
     CandidateRowPage,
@@ -23,15 +30,20 @@ __all__ = [
     "CandidateRow",
     "CandidateRowPage",
     "CrmMetrics",
+    "InterviewChangeRequest",
     "LastMessage",
     "Pager",
     "StatusChangeRequest",
+    "SlotOption",
+    "SlotUnavailableError",
     "StatusCounts",
     "TokenMetrics",
     "TransitionError",
     "allowed_targets",
+    "apply_interview_change",
     "apply_status_change",
     "compute_metrics",
     "filter_and_sort",
+    "slot_options",
     "to_row",
 ]
