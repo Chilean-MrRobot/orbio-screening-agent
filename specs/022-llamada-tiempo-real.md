@@ -178,6 +178,24 @@ Arreglos:
 3. **Stream vivo:** heartbeats (chunks vacíos) y una segunda frase de espera mientras corre el
    turno.
 
+**Verificado en producción** con el agente real (`scripts/voice_call_probe.py`, 4 turnos
+seguidos, instancia caliente, extracción con gpt-4.1-mini):
+
+| Turno | Primer audio (servidor) | Turno en el servidor | Respuesta completa en ElevenLabs |
+|---|---|---|---|
+| 1 | 1,5 s (frase de espera) | 4,3 s | 5,1 s |
+| 2 | 1,5 s | 3,0 s | 3,8 s |
+| 3 | 1,5 s | 3,6 s | 5,0 s |
+| 4 | 1,5 s | 3,0 s | 4,3 s |
+
+En modo texto, ElevenLabs entrega cada respuesta completa en un solo `agent_response`, que incluye
+la frase de espera. En voz, el TTS empieza con el primer chunk, a los ~1,5 s.
+
+El probe tenía un error propio: medía el "silencio" del agente desde el último evento, y los
+`ping` de ElevenLabs (cada ~2 s) lo reiniciaban. Por eso nunca enviaba el primer
+`user_message`. Ahora el silencio se mide desde la última `agent_response`
+(`tests/unit/test_voice_call_probe.py`).
+
 No se sabe todavía si ElevenLabs cuenta los chunks vacíos para su timeout. Si no los cuenta,
 el límite real es de 15 s sin texto, y la segunda frase de espera a los 6 s lo cubre en los
 turnos de hasta ~20 s. Se confirma con `scripts/voice_call_probe.py` después de desplegar.
