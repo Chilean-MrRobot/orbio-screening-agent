@@ -26,6 +26,8 @@ SECRETS: dict[str, tuple[str, bool]] = {
     "WHATSAPP_ACCESS_TOKEN": ("whatsapp-access-token", False),
     "LANGSMITH_API_KEY": ("langsmith-api-key", False),
     "ELEVENLABS_API_KEY": ("elevenlabs-api-key", False),
+    "VOICE_LLM_SECRET": ("voice-llm-secret", False),
+    "ELEVENLABS_AGENT_ID": ("elevenlabs-agent-id", False),
 }
 
 

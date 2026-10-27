@@ -49,3 +49,16 @@ def template_variables(candidate: Candidate, config: AppConfig) -> dict[str, str
         sla_hours=str(config.client.recruiter_sla_hours),
         license_term=region.vocabulary.get("license", "") if region else "",
     )
+
+
+def agent_first_message(config: AppConfig, language: Language) -> str:
+    """`first_contact` para el agente de voz (spec 022): `{{first_name}}` queda como variable
+    dinámica de ElevenLabs y el resto se completa con la configuración del cliente."""
+    texts = config.templates["first_contact"]
+    text = texts.get(language) or texts[Language.ES]
+    variables = _Variables(
+        agent_name=config.client.agent_name,
+        client_name=config.client.name,
+        sla_hours=str(config.client.recruiter_sla_hours),
+    )
+    return text.format_map(variables).replace("{first_name}", "{{first_name}}")

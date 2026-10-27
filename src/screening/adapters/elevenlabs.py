@@ -22,7 +22,9 @@ API_KEY_ENV = "ELEVENLABS_API_KEY"
 _EMOJI = re.compile(
     "[\U0001f000-\U0001faff\U00002600-\U000027bf\U0001f1e6-\U0001f1ff\ufe0f\u200d\u20e3]+"
 )
-_MARKDOWN = re.compile(r"[*_`#>~]+")
+# `_` solo como marca (`_sí_`): entre letras es parte de un nombre (`{{first_name}}`).
+_MARKDOWN = re.compile(r"[*`#>~]+|(?<!\w)_+|_+(?!\w)")
+_EMOJI_BETWEEN_SENTENCES = re.compile(r"(?<=[\w)])\s*\x00+\s*(?=[A-ZÁÉÍÓÚÑ¿¡])")
 _SPACES = re.compile(r"\s+")
 
 
@@ -73,8 +75,10 @@ class _SttResponse(BaseModel):
 
 def speakable(text: str) -> str:
     """El texto de un mensaje sin emojis ni marcas de Markdown, para sintetizarlo."""
-    text = _MARKDOWN.sub("", _EMOJI.sub(" ", text))
-    return _SPACES.sub(" ", text).strip()
+    text = _EMOJI.sub("\x00", text)
+    # Un emoji que separa dos frases ("… Sazón 👋 Vi que …") deja un punto, para la entonación.
+    text = _EMOJI_BETWEEN_SENTENCES.sub(". ", text).replace("\x00", " ")
+    return _SPACES.sub(" ", _MARKDOWN.sub("", text)).strip()
 
 
 class ElevenLabsVoice:

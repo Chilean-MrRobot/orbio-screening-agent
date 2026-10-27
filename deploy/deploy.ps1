@@ -46,6 +46,9 @@ if ($Only -in "all", "api") {
     if (Test-Secret "elevenlabs-api-key") {
         $secrets += "ELEVENLABS_API_KEY=elevenlabs-api-key:latest"
     }
+    # Llamada en tiempo real (spec 022): el secreto del Custom LLM y el ID del agente, si existen.
+    if (Test-Secret "voice-llm-secret") { $secrets += "VOICE_LLM_SECRET=voice-llm-secret:latest" }
+    if (Test-Secret "elevenlabs-agent-id") { $secrets += "ELEVENLABS_AGENT_ID=elevenlabs-agent-id:latest" }
 
     $envVars = @(
         "SCREENING_REPOSITORY=firestore",

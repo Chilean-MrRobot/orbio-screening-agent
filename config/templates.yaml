@@ -90,3 +90,14 @@ templates:
   interview_no_response:
     es: "{first_name}, como no tuvimos respuesta, un reclutador de {client_name} te contactará para coordinar la entrevista."
     en: "{first_name}, since we didn't hear back, a {client_name} recruiter will contact you to schedule the interview."
+
+  # Llamada en tiempo real (spec 022): se dicen pero no se guardan en la ficha.
+  # Frase de espera si el turno tarda más de VOICE_WAIT_AFTER_SECONDS.
+  voice_wait:
+    es: "Vale, déjame anotarlo."
+    en: "Okay, let me note that down."
+
+  # Si el candidato habla mientras Sofía todavía procesa lo anterior.
+  voice_busy:
+    es: "Un segundo, {first_name}, sigo con lo que me dijiste."
+    en: "One second, {first_name}, I'm still on what you just told me."

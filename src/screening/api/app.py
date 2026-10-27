@@ -14,6 +14,7 @@ from fastapi import APIRouter, FastAPI
 from pydantic import SecretStr
 
 from screening.adapters.elevenlabs import ElevenLabsSettings, ElevenLabsVoice
+from screening.adapters.elevenlabs_agents import ElevenLabsAgents
 from screening.api.applications import ApplicationStarter, build_applications_router
 from screening.api.crm import build_crm_router_from_env
 from screening.api.inbound_tasks import (
@@ -24,6 +25,7 @@ from screening.api.inbound_tasks import (
 from screening.api.reengagement import ReengagementRunner, build_reengagement_router
 from screening.api.settings import WhatsAppSettings
 from screening.api.voice import AudioLimits, build_voice_router
+from screening.api.voice_call import CallSettings, build_voice_call_router
 from screening.api.web_chat import WebChatService, build_web_chat_router
 from screening.api.webhook import build_webhook_router
 from screening.api.wiring import (
@@ -66,6 +68,7 @@ def create_app(
     tasks_token: SecretStr | None = None,
     web_chat_router: APIRouter | None = None,
     voice_router: APIRouter | None = None,
+    voice_call_router: APIRouter | None = None,
 ) -> FastAPI:
     """Sin `settings` de WhatsApp no se monta el webhook ni la cola de lotes (spec 019).
 
@@ -93,6 +96,8 @@ def create_app(
         app.include_router(web_chat_router)
     if voice_router is not None:
         app.include_router(voice_router)
+    if voice_call_router is not None:
+        app.include_router(voice_call_router)
     if applications is not None:
         app.include_router(build_applications_router(applications))
     if reengagement is not None:
@@ -151,6 +156,9 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
     )
     token = os.environ.get("REENGAGEMENT_TASK_TOKEN")
     voice_settings = ElevenLabsSettings.from_env()  # sin key, la voz queda deshabilitada
+    web_chat = WebChatService(
+        starter=orchestrator, handler=orchestrator, repository=repository, clock=clock
+    )
     # La cola de lotes solo existe para el webhook de WhatsApp.
     task_queue, tasks_token = build_task_queue(clock) if settings else (None, None)
     return create_app(
@@ -168,11 +176,15 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
             starter=orchestrator, handler=orchestrator, repository=repository, clock=clock
         ),
         voice_router=build_voice_router(
-            chat=WebChatService(
-                starter=orchestrator, handler=orchestrator, repository=repository, clock=clock
-            ),
+            chat=web_chat,
             voice=ElevenLabsVoice(voice_settings) if voice_settings else None,
             limits=AudioLimits.from_env(),
+        ),
+        voice_call_router=build_voice_call_router(  # spec 022
+            chat=web_chat,
+            tokens=ElevenLabsAgents(voice_settings.api_key) if voice_settings else None,
+            settings=CallSettings.from_env(),
+            config=config,
         ),
     )
 
