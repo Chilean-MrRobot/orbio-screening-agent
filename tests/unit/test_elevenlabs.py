@@ -133,6 +133,14 @@ def test_settings_from_env() -> None:
         ("¡Hola Lucía! 👋 Soy **Sofía** 🛵", "¡Hola Lucía! Soy Sofía"),
         ("Responde _sí_ o `no`.", "Responde sí o no."),
         ("🙂", ""),
+        (
+            "Soy Sofía, de Grupo Sazón 👋 Vi que postulaste.",
+            "Soy Sofía, de Grupo Sazón. Vi que postulaste.",
+        ),
+        (
+            "Hola {{first_name}}, ¿todo bien? 🙂 ¿Seguimos?",
+            "Hola {{first_name}}, ¿todo bien? ¿Seguimos?",
+        ),
     ],
 )
 def test_speakable_removes_emojis_and_markdown(text: str, expected: str) -> None:

@@ -28,6 +28,7 @@ Cada feature parte con una spec aquí, **antes** de escribir tests o código. Or
 | 019 | Chat web público del demo | 5 |
 | 020 | Agente de voz en el navegador (ElevenLabs) | 6 |
 | 021 | Agendamiento de entrevistas | 6 |
+| 022 | Llamada en tiempo real (ElevenLabs Conversational AI) | 7 |
 
 ## Plantilla
 

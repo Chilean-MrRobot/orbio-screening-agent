@@ -16,6 +16,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from screening.crm import views
+from screening.crm.call_page import call_page
 from screening.crm.chat_page import chat_page
 from screening.crm.client import PASSWORD_ENV, CrmApiError, CrmClient
 from screening.crm.interviews import BOOKABLE_STATUSES
@@ -472,6 +473,7 @@ navigation = st.navigation(
     [
         st.Page(chat_page, title="Postular (candidato)", icon="💬", url_path="chat", default=True),
         st.Page(voice_page, title="Hablar con Sofía (voz)", icon="🎙️", url_path="voz"),
+        st.Page(call_page, title="Llamar a Sofía (tiempo real)", icon="📞", url_path="llamada"),
         st.Page(panel_page, title="Panel (recruiter)", icon="📋", url_path="panel"),
     ]
 )
