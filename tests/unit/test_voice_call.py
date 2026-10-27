@@ -568,3 +568,38 @@ def test_widget_embeds_the_session_safely_and_pins_the_sdk() -> None:
     assert "</script><script>alert(1)" not in html
     assert '"first_name": "Lucía"' in html
     assert "xi-api-key" not in html
+
+
+def test_official_openai_client_as_elevenlabs_calls_it(
+    client: TestClient, agent: ScriptedAgent, repository: InMemoryCandidateRepository
+) -> None:
+    """ElevenLabs usa el SDK de OpenAI (`AsyncOpenAI`) con `base_url` = la URL del agente y el
+    secreto como api_key. Se reproduce con el SDK real sobre el TestClient."""
+    from openai import OpenAI
+
+    session = start(client)
+    agent.queue(ExtractionOutcome(provided_fields=["consent"], updates={"consent": True}))
+    llm = OpenAI(base_url=f"{client.base_url}/voice/llm/v1", api_key=SECRET, http_client=client)
+    system = (
+        "Eres Sofía, la asistente virtual de reclutamiento de Grupo Sazón.\n"
+        f"candidate_id: {session.chat.candidate_id}\n"
+    )
+
+    stream = llm.chat.completions.create(
+        model="orbio-screening-orchestrator",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "assistant", "content": session.chat.messages[0].text},
+            {"role": "user", "content": "Sí, acepto."},
+        ],
+        stream=True,
+        temperature=0.5,
+        max_tokens=5000,
+        tools=[END_CALL_TOOL],  # type: ignore[list-item]
+        extra_body={"user_id": "conv_123", "elevenlabs_extra_body": {}},
+    )
+    text = "".join(chunk.choices[0].delta.content or "" for chunk in stream)
+
+    stored = repository.get(session.chat.candidate_id)
+    assert stored is not None and stored.data.consent is True
+    assert text.strip() == speakable(stored.messages[-1].text)

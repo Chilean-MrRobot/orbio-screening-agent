@@ -107,9 +107,24 @@ Las respuestas del agente traen ejemplos pensados para el chat ("Por ejemplo: s�
 suenan raros. Queda como mejora un prompt de respuesta por canal (spec 009), que se controla con
 el golden dataset.
 
-Siguiente paso, fuera de alcance: que la respuesta del agente (spec 009) se genere en
-streaming dentro del orquestador y la extracción vaya en paralelo. Así bajaría el primer
-token a ~1 s, pero cambia el contrato del agente.
+El endpoint **no supone un modelo**: transmite en cuanto el orquestador entrega texto y no
+llama al LLM por su cuenta. Si se cambian los modelos de extracción y respuesta en
+`config/client.yaml` (por ejemplo, por modelos sin razonamiento), el turno se acorta y la
+llamada lo nota sin cambiar nada aquí.
+
+Siguiente paso, fuera de alcance: **streaming por token de la respuesta**. Cambia el contrato
+del agente (`ports.py`), así que se coordina aparte:
+1. `ScreeningAgent.reply` acepta un callback opcional `on_delta(text)`. El adaptador ADK/LiteLLM
+   lo llama con cada fragmento cuando el modelo hace streaming, y si no lo hace, una sola vez
+   con el texto final. Así funciona con cualquier modelo.
+2. El orquestador pasa ese callback durante el turno y guarda el mensaje completo al final,
+   como hoy.
+3. Este endpoint pone los fragmentos en una `asyncio.Queue` (desde el hilo del turno, con
+   `loop.call_soon_threadsafe`) y los emite como chunks SSE a medida que llegan. La frase de
+   espera solo sale si no llegó ningún fragmento antes de `VOICE_WAIT_AFTER_SECONDS`.
+
+La extracción sigue antes de la respuesta, porque decide qué preguntar. Con modelos sin
+razonamiento, el primer token llegaría en ~1–2 s.
 
 ## Casos borde
 - **Interrupción:** ElevenLabs cancela la respuesta en curso y manda otro pedido con lo nuevo.
