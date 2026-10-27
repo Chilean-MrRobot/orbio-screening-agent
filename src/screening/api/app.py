@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -26,6 +26,7 @@ from screening.api.reengagement import ReengagementRunner, build_reengagement_ro
 from screening.api.settings import WhatsAppSettings
 from screening.api.voice import AudioLimits, build_voice_router
 from screening.api.voice_call import CallSettings, build_voice_call_router
+from screening.api.warmup import warm_up_llms, warmup_enabled, warmup_timeout
 from screening.api.web_chat import WebChatService, build_web_chat_router
 from screening.api.webhook import build_webhook_router
 from screening.api.wiring import (
@@ -69,6 +70,8 @@ def create_app(
     web_chat_router: APIRouter | None = None,
     voice_router: APIRouter | None = None,
     voice_call_router: APIRouter | None = None,
+    warmup: Callable[[], object] | None = None,
+    warmup_timeout: float = 8.0,
 ) -> FastAPI:
     """Sin `settings` de WhatsApp no se monta el webhook ni la cola de lotes (spec 019).
 
@@ -81,6 +84,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        if warmup is not None:
+            # Calienta los LLM sin demorar el arranque más de `warmup_timeout`: si tarda más,
+            # sigue en su hilo y la instancia empieza a atender igual.
+            try:
+                await asyncio.wait_for(asyncio.to_thread(warmup), timeout=warmup_timeout)
+            except TimeoutError:
+                logging.getLogger(__name__).warning("llm_warmup sigue en segundo plano")
         yield
         if isinstance(queue, LocalTaskQueue):
             await queue.aclose()
@@ -186,6 +196,8 @@ def create_app_from_env(agent: ScreeningAgent | None = None) -> FastAPI:
             settings=CallSettings.from_env(),
             config=config,
         ),
+        warmup=(lambda: warm_up_llms(config)) if warmup_enabled() else None,
+        warmup_timeout=warmup_timeout(),
     )
 
 

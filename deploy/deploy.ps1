@@ -5,12 +5,16 @@
 #   ./deploy/deploy.ps1                       # todo, con el chat web (sin WhatsApp)
 #   ./deploy/deploy.ps1 -Only api             # solo la API
 #   ./deploy/deploy.ps1 -WhatsApp -PhoneNumberId <id>   # además, el webhook de WhatsApp
+#   ./deploy/deploy.ps1 -MinInstances 1       # instancias siempre encendidas (presentación)
 param(
     [string]$Project = "gentle-app-313016",
     [string]$Region = "europe-west1",
     [ValidateSet("all", "api", "panel", "scheduler")][string]$Only = "all",
     [switch]$WhatsApp,            # monta el webhook y la cola de Cloud Tasks (spec 016)
-    [string]$PhoneNumberId = ""   # WHATSAPP_PHONE_NUMBER_ID de Meta
+    [string]$PhoneNumberId = "",  # WHATSAPP_PHONE_NUMBER_ID de Meta
+    # 0 escala a cero (no cobra sin uso). 1 deja una instancia caliente por servicio: sin
+    # arranque en frío en la presentación, pero cobra CPU y memoria todo el tiempo.
+    [int]$MinInstances = 0
 )
 # "Continue": gcloud escribe avisos por stderr (p. ej. "no existe" al probar un secreto) y con
 # "Stop" PowerShell 5.1 los trata como fatales. Cada paso revisa $LASTEXITCODE.
@@ -58,6 +62,8 @@ if ($Only -in "all", "api") {
         "LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com",
         "PANEL_METRICS_WINDOW=1000",
         "REENGAGEMENT_MAX_PER_PASS=1000",
+        # LiteLLM no descarga su mapa de precios al primer uso (segundos en frío, spec 022).
+        "LITELLM_LOCAL_MODEL_COST_MAP=True",
         "ELEVENLABS_VOICE_ID=FGY2WhTYpPnrIDTdsKH5",
         "ELEVENLABS_TTS_MODEL=eleven_flash_v2_5",
         "ELEVENLABS_STT_MODEL=scribe_v1"
@@ -91,7 +97,7 @@ if ($Only -in "all", "api") {
         --image="$registry/api:latest" --service-account=$apiSa `
         --allow-unauthenticated `
         --cpu=1 --memory=1Gi --concurrency=20 --timeout=300 `
-        --min-instances=0 --max-instances=3 `
+        --min-instances=$MinInstances --max-instances=3 --cpu-boost `
         $envArg $secretsArg
     if ($LASTEXITCODE -ne 0) { throw "falló el despliegue de la API" }
     Write-Host "API: $(Get-ServiceUrl 'screening-api')"
@@ -103,7 +109,7 @@ if ($Only -in "all", "panel") {
     gcloud run deploy screening-panel --project=$Project --region=$Region `
         --image="$registry/crm:latest" --service-account=$panelSa `
         --allow-unauthenticated --session-affinity `
-        --cpu=1 --memory=1Gi --min-instances=0 --max-instances=2 `
+        --cpu=1 --memory=1Gi --min-instances=$MinInstances --max-instances=2 `
         --set-env-vars="PANEL_API_URL=$apiUrl,PANEL_REFRESH_SECONDS=5,PANEL_PAGE_SIZE=25" `
         --set-secrets="PANEL_PASSWORD=panel-password:latest"
     if ($LASTEXITCODE -ne 0) { throw "falló el despliegue del panel" }

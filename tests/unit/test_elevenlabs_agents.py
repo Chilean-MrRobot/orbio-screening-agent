@@ -118,6 +118,10 @@ def test_agent_config_points_to_our_llm_with_the_secret() -> None:
     assert prompt["custom_llm"]["url"] == "https://api.example.run.app/voice/llm/v1"
     assert prompt["custom_llm"]["api_key"] == {"secret_id": "sec-1"}
     assert "end_call" in prompt["built_in_tools"]
+    # Nuestro turno tarda varios segundos: el máximo antes de la cascada, y sin LLM de
+    # respaldo (otro modelo respondería sin el orquestador, las reglas ni la ficha).
+    assert prompt["cascade_timeout_seconds"] == 15
+    assert prompt["backup_llm_config"] == {"preference": "disabled"}
     tts = config["conversation_config"]["tts"]
     assert tts == {"voice_id": "voice-1", "model_id": "eleven_flash_v2_5"}
     english = config["conversation_config"]["language_presets"]["en"]["overrides"]["agent"]

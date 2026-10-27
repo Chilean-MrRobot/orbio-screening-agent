@@ -156,6 +156,11 @@ def build_agent_config(spec: AgentSpec, *, secret_id: str) -> dict[str, Any]:
                         "model_id": LLM_MODEL_ID,
                         "api_key": {"secret_id": secret_id},
                     },
+                    # Un turno nuestro tarda varios segundos (extracción + respuesta): el
+                    # máximo antes de la cascada (4 s por defecto), y sin LLM de respaldo,
+                    # que respondería sin el orquestador, las reglas ni la ficha.
+                    "cascade_timeout_seconds": 15,
+                    "backup_llm_config": {"preference": "disabled"},
                     "built_in_tools": {
                         "end_call": {
                             "name": "end_call",
