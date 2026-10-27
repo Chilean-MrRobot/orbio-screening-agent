@@ -4,15 +4,18 @@ client:
   recruiter_sla_hours: 48   # "un reclutador te contactará en las próximas 48 h"
 
 # Modelos de OpenAI. Cambiarlos aquí no requiere tocar código.
+# Elegidos con las evals (accuracy + latencia, oct-2026):
+#   extracción gpt-4.1-mini (sin razonamiento): 97,3% en 2,6 s  vs  gpt-5-mini low: 97,3% en 4,1 s
+#   respuesta  gpt-5-mini minimal: 100%                         vs  gpt-4.1-mini: 80–100%
+#   gpt-4o-mini quedó bajo el umbral en extracción (83,8%).
 llm:
   conversation_model: gpt-5-mini
-  extraction_model: gpt-5-mini
+  extraction_model: gpt-4.1-mini
   classifier_model: gpt-5-nano     # clasificador de emoción: modelo chico y rápido
   judge_model: gpt-5-mini          # LLM-as-a-judge de las evaluaciones
   embedding_model: text-embedding-3-small
-  extraction_temperature: null     # los modelos de razonamiento no aceptan temperature
-  # Esfuerzo de razonamiento (minimal | low | medium | high), medido con las evals:
-  # minimal baja la latencia a ~2 s por llamada sin perder calidad en respuesta, resumen,
-  # emoción ni RAG; la extracción necesita low (correcciones, confirmación, "mi coche").
+  extraction_temperature: null
+  # Esfuerzo de razonamiento de los modelos gpt-5 (minimal | low | medium | high).
+  # En gpt-4.1-mini no aplica: LiteLLM descarta el parámetro.
   reasoning_effort: minimal
-  extraction_reasoning_effort: low
+  extraction_reasoning_effort: null
