@@ -89,9 +89,27 @@ cambian el diseño:
 2. **Streaming apenas existe la respuesta:** el texto sale en cuanto el turno termina, frase
    por frase, y ElevenLabs empieza a sintetizar con la primera.
 3. **TTS y STT de ElevenLabs** de baja latencia (`eleven_flash_v2_5`) y WebRTC.
+4. **Stream vivo:** si el turno sigue después de `VOICE_WAIT_REPEAT_SECONDS`, se dice una
+   segunda frase (`voice_wait_more`). Entre medio, cada `VOICE_HEARTBEAT_SECONDS` sale un chunk
+   vacío (`delta.content = ""`), que no se dice. Ver "Corrección tras la prueba en producción".
+5. **Arranque en frío:** con `LITELLM_LOCAL_MODEL_COST_MAP=True`, LiteLLM no descarga su mapa de
+   precios. Al arrancar, la API hace una llamada mínima a cada modelo configurado, en paralelo
+   (`api/warmup.py`, `LLM_WARMUP`). Ese calentamiento retrasa el arranque como máximo
+   `LLM_WARMUP_TIMEOUT_SECONDS`; si tarda más, sigue en segundo plano. `deploy.ps1 -MinInstances 1`
+   deja una instancia caliente para la presentación, y la API usa `--cpu-boost`.
 
-Se mide y registra (log `voice_llm_turn`): ms hasta el primer chunk, ms del turno y si hubo
-frase de espera.
+Se mide y registra (log `voice_llm_turn`): ms hasta el primer chunk, ms del turno, frases de
+espera dichas y heartbeats enviados. El calentamiento queda en el log `llm_warmup`.
+
+**Arranque en frío medido** (local; primera llamada después de importar LiteLLM, como en la API):
+
+| | Extracción (gpt-4.1-mini) |
+|---|---|
+| Sin mapa local ni calentamiento | 8,8 s (igual que en producción) |
+| Con `LITELLM_LOCAL_MODEL_COST_MAP=True` | 3,3 s |
+| Después del calentamiento | 1,2 s |
+
+El calentamiento de los tres modelos en paralelo tarda 5,6 s.
 
 **Medido** con la API en local, el agente real (OpenAI) y cinco turnos de screening:
 
@@ -132,8 +150,37 @@ razonamiento, el primer token llegaría en ~1–2 s.
   hasta `VOICE_BUSY_WAIT_SECONDS`; si no lo obtiene, responde "un segundo" con la plantilla
   `voice_busy`. La respuesta del turno cancelado queda en la ficha aunque no se haya oído.
 - **Conversación cerrada:** se responde el último mensaje de Sofía y se cuelga con `end_call`.
-- **Reintento de ElevenLabs con el mismo texto:** se procesa de nuevo como un mensaje más. Es
-  aceptable para el demo; en producción se deduplicaría por `conversation_id` + índice.
+- **Reintento de ElevenLabs con el mismo texto:** no se procesa otra vez. Se considera
+  reintento cuando el texto es igual al último mensaje del candidato en la ficha y la
+  respuesta de Sofía a ese mensaje todavía no existe o no viene en el historial como su último
+  mensaje. Si el candidato repite de verdad ("sí" y otra vez "sí"), sí escuchó la respuesta
+  intermedia y se procesa.
+- **Pedido sin texto nuevo** (el historial termina en un mensaje de Sofía, p. ej. la frase de
+  espera): se espera el turno en curso y se devuelve lo que falta decir. Si no hay nada
+  pendiente, se repite la última pregunta. **Nunca se devuelve un stream sin texto.**
+
+## Corrección tras la prueba en producción
+Primera llamada real: el turno 1 tardó 11 s. La frase de espera salió a 1,5 s y después hubo
+9,5 s sin chunks. ElevenLabs tiene `cascade_timeout_seconds` en **4 s por defecto**: sin
+noticias del LLM, "cascadea", reintenta o pasa a un LLM de respaldo. Los dos pedidos nuevos
+llegaron con el historial terminado en la frase de espera, sin texto nuevo. La API respondió
+vacío en 1–2 ms y ElevenLabs cortó con `custom_llm_error: LLM Cascade Error: TimeoutError`.
+Por eso el candidato solo oyó la frase de espera.
+
+Arreglos:
+1. **Agente** (`deploy/elevenlabs_agent.py`): `cascade_timeout_seconds: 15` (el máximo) y
+   `backup_llm_config: disabled`. Un LLM de respaldo respondería sin el orquestador, sin las
+   reglas y sin la ficha. Ya está aplicado al agente.
+2. **Endpoint:** los reintentos y los pedidos sin texto esperan el turno en curso, leyendo la
+   ficha (Firestore) hasta `VOICE_BUSY_WAIT_SECONDS`, sin estado en memoria. Devuelven solo las
+   frases que ElevenLabs no dijo y nunca devuelven vacío: si el turno no termina a tiempo,
+   dicen la frase de espera.
+3. **Stream vivo:** heartbeats (chunks vacíos) y una segunda frase de espera mientras corre el
+   turno.
+
+No se sabe todavía si ElevenLabs cuenta los chunks vacíos para su timeout. Si no los cuenta,
+el límite real es de 15 s sin texto, y la segunda frase de espera a los 6 s lo cubre en los
+turnos de hasta ~20 s. Se confirma con `scripts/voice_call_probe.py` después de desplegar.
 
 ## Criterios de aceptación
 - **Dado** un pedido sin el bearer correcto, **cuando** llega al endpoint LLM, **entonces**

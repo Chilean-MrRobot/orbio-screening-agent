@@ -97,6 +97,11 @@ templates:
     es: "Vale, déjame anotarlo."
     en: "Okay, let me note that down."
 
+  # Segunda frase si el turno sigue después de VOICE_WAIT_REPEAT_SECONDS.
+  voice_wait_more:
+    es: "Un momento más, ya casi lo tengo."
+    en: "Just a moment more, almost there."
+
   # Si el candidato habla mientras Sofía todavía procesa lo anterior.
   voice_busy:
     es: "Un segundo, {first_name}, sigo con lo que me dijiste."

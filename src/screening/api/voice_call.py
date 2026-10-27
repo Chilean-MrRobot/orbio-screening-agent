@@ -38,7 +38,7 @@ from screening.api.web_chat import (
 )
 from screening.config import AppConfig
 from screening.conversation.messages import render_template, template_variables
-from screening.domain import Candidate
+from screening.domain import Candidate, MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,12 @@ class ConversationTokens(Protocol):
 class CallSettings(BaseModel):
     agent_id: str | None = None
     llm_secret: SecretStr | None = None
-    wait_after_seconds: float = 1.5  # 0 desactiva la frase de espera
-    busy_wait_seconds: float = 8.0
+    wait_after_seconds: float = 1.5  # frase de espera (`voice_wait`); 0 la desactiva
+    wait_repeat_seconds: float = 6.0  # segunda frase (`voice_wait_more`); 0 la desactiva
+    # Chunk vacío mientras corre el turno, para que ElevenLabs vea el stream vivo; 0 lo apaga.
+    heartbeat_seconds: float = 1.0
+    # Cuánto espera un pedido a que termine el turno en curso del mismo candidato.
+    busy_wait_seconds: float = 20.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> CallSettings:
@@ -66,6 +70,8 @@ class CallSettings(BaseModel):
             "agent_id": env.get("ELEVENLABS_AGENT_ID"),
             "llm_secret": env.get("VOICE_LLM_SECRET"),
             "wait_after_seconds": env.get("VOICE_WAIT_AFTER_SECONDS"),
+            "wait_repeat_seconds": env.get("VOICE_WAIT_REPEAT_SECONDS"),
+            "heartbeat_seconds": env.get("VOICE_HEARTBEAT_SECONDS"),
             "busy_wait_seconds": env.get("VOICE_BUSY_WAIT_SECONDS"),
         }
         return cls.model_validate({k: v.strip() for k, v in values.items() if v and v.strip()})
@@ -116,8 +122,54 @@ def _content(message: dict[str, Any]) -> str:
     return content if isinstance(content, str) else ""
 
 
+def spoken_after_last_user(messages: list[dict[str, Any]]) -> str:
+    """Lo que ElevenLabs ya dijo en este turno (frase de espera, una respuesta cortada)."""
+    texts: list[str] = []
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            break
+        if message.get("role") == "assistant":
+            texts.append(_content(message))
+    return speakable(" ".join(reversed(texts)))
+
+
+def previous_assistant(messages: list[dict[str, Any]]) -> str:
+    """El último mensaje de Sofía antes de lo que acaba de decir el usuario."""
+    seen_user = False
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            seen_user = True
+        elif message.get("role") == "assistant" and seen_user:
+            return speakable(_content(message))
+    return ""
+
+
+def unspoken(reply: str, said: str) -> str:
+    """Las frases de `reply` que ElevenLabs todavía no dijo."""
+    already = set(_sentences(said))
+    return " ".join(s for s in _sentences(reply) if s not in already)
+
+
+def is_retry(candidate: Candidate, text: str, messages: list[dict[str, Any]]) -> bool:
+    """¿Es el mismo mensaje del candidato que ya está en la ficha (reintento de ElevenLabs)?
+
+    Si el candidato repite de verdad la misma respuesta ("sí" y "sí"), antes escuchó la
+    respuesta de Sofía al primero, y ese texto viene en el historial como su último mensaje.
+    """
+    said = [m for m in candidate.messages if m.role == MessageRole.CANDIDATE]
+    if not said or said[-1].text.strip() != text:
+        return False
+    reply = new_agent_text(candidate)
+    return not reply or reply not in previous_assistant(messages)
+
+
+def last_agent_text(candidate: Candidate) -> str:
+    agent = [m for m in candidate.messages if m.role == MessageRole.AGENT]
+    return speakable(agent[-1].text) if agent else ""
+
+
 def _sentences(text: str) -> list[str]:
-    return [s for s in _SENTENCE_END.split(text) if s]
+    return [s.strip() for s in _SENTENCE_END.split(text) if s.strip()]
 
 
 def build_voice_call_router(
@@ -175,22 +227,52 @@ def build_voice_call_router(
         if scheme.lower() != "bearer" or not hmac.compare_digest(given.encode(), expected):
             raise HTTPException(status_code=401, detail="no autorizado")
 
-    def run_turn(candidate: Candidate, text: str) -> TurnResult:
-        """Bloqueante (LLM): corre en un hilo. Si el lease está tomado, espera un poco."""
-        if not text:  # ElevenLabs a veces pide respuesta sin texto nuevo: no se procesa nada
-            return TurnResult(new_agent_text(candidate), is_closed(candidate))
+    def send(candidate: Candidate, text: str) -> Candidate | None:
+        """Procesa el texto; si otro turno tiene el lease, lo espera. `None` si no llegó."""
         deadline = time.monotonic() + settings.busy_wait_seconds
         while True:
             try:
-                updated = chat.send(candidate.id, text[:MAX_MESSAGE_CHARS])
-                return TurnResult(new_agent_text(updated), is_closed(updated))
+                return chat.send(candidate.id, text)
             except HTTPException as e:
                 if e.status_code != 409:
                     raise
                 if time.monotonic() >= deadline:
-                    busy = speakable(render_template("voice_busy", candidate, config))
-                    return TurnResult(busy, False)
-                sleep(0.5)
+                    return None
+                sleep(0.3)
+
+    def wait_for_reply(candidate_id: str) -> Candidate | None:
+        """Espera a que el turno en curso deje la respuesta de Sofía en la ficha (Firestore)."""
+        deadline = time.monotonic() + settings.busy_wait_seconds
+        while True:
+            candidate = chat.load(candidate_id)
+            if new_agent_text(candidate) or is_closed(candidate):
+                return candidate
+            if time.monotonic() >= deadline:
+                return None
+            sleep(0.3)
+
+    def respond(candidate: Candidate, messages: list[dict[str, Any]]) -> TurnResult:
+        """Bloqueante (LLM): corre en un hilo. Nunca devuelve un texto vacío.
+
+        - Texto nuevo del candidato: pasa por el orquestador (mismo camino que el chat web).
+        - Reintento de ElevenLabs o pedido sin texto nuevo: no se procesa otra vez; se espera
+          el turno en curso y se devuelve lo que Sofía todavía no dijo.
+        """
+        text = user_text_from(messages)[:MAX_MESSAGE_CHARS]
+        if text and not is_retry(candidate, text, messages):
+            updated = send(candidate, text)
+            if updated is None:
+                busy = speakable(render_template("voice_busy", candidate, config))
+                return TurnResult(busy, False)
+        else:
+            updated = wait_for_reply(candidate.id)
+            if updated is None:
+                wait = speakable(render_template("voice_wait", candidate, config))
+                return TurnResult(wait, False)
+        said = spoken_after_last_user(messages)
+        reply = unspoken(new_agent_text(updated), said)
+        # Nada pendiente (p. ej. ElevenLabs pide seguir tras un silencio): repite la pregunta.
+        return TurnResult(reply or last_agent_text(updated), is_closed(updated))
 
     @router.post("/llm/v1/chat/completions", response_model=None)
     async def completions(
@@ -208,35 +290,58 @@ def build_voice_call_router(
         if candidate_id is None:
             raise HTTPException(status_code=400, detail="falta candidate_id en el prompt")
         candidate = await run_in_threadpool(chat.load, candidate_id)
-        text = user_text_from(messages)
         tool_names = {(t.get("function") or {}).get("name") for t in body.get("tools") or []}
         end_call = "end_call" in tool_names
         completion = _Completion(str(body.get("model") or "orbio"))
 
         if not body.get("stream"):
             started = time.monotonic()
-            result = await run_in_threadpool(run_turn, candidate, text)
-            _log_turn(candidate.id, started, first_chunk=None, waited=False)
+            result = await run_in_threadpool(respond, candidate, messages)
+            _log_turn(candidate.id, started, first_chunk=None, fillers=0, heartbeats=0)
             return completion.message(result.text, end_call=end_call and result.closed)
 
-        wait_text = ""
-        if settings.wait_after_seconds > 0 and text:
-            wait_text = speakable(render_template("voice_wait", candidate, config))
+        # Frases de espera por tiempo transcurrido, salvo las que ElevenLabs ya dijo.
+        said = spoken_after_last_user(messages)
+        fillers = [
+            (seconds, speakable(render_template(key, candidate, config)))
+            for seconds, key in (
+                (settings.wait_after_seconds, "voice_wait"),
+                (settings.wait_repeat_seconds, "voice_wait_more"),
+            )
+            if seconds > 0
+        ]
+        fillers = sorted((s, t) for s, t in fillers if t and t not in said)
 
         async def events() -> AsyncIterator[str]:
             started = time.monotonic()
-            turn = asyncio.ensure_future(run_in_threadpool(run_turn, candidate, text))
+            turn = asyncio.ensure_future(run_in_threadpool(respond, candidate, messages))
             yield completion.chunk({"role": "assistant", "content": ""})
             first_chunk: float | None = None
-            waited = False
-            if wait_text:
-                done, _ = await asyncio.wait({turn}, timeout=settings.wait_after_seconds)
-                if not done:
+            pending, spoken, heartbeats = list(fillers), [], 0
+            # Mientras corre el turno: frases de espera a su hora y, entre medio, chunks vacíos
+            # (heartbeat). Sin nada en `cascade_timeout_seconds`, ElevenLabs reintenta o corta.
+            while not turn.done():
+                elapsed = time.monotonic() - started
+                waits = [pending[0][0] - elapsed] if pending else []
+                if settings.heartbeat_seconds > 0:
+                    waits.append(settings.heartbeat_seconds)
+                timeout = max(0.0, min(waits)) if waits else None
+                done, _ = await asyncio.wait({turn}, timeout=timeout)
+                if done:
+                    break
+                if pending and time.monotonic() - started >= pending[0][0]:
+                    _, filler = pending.pop(0)
                     # El espacio final evita que el TTS corte la frase (guía de ElevenLabs).
-                    yield completion.chunk({"content": wait_text + " "})
-                    first_chunk, waited = time.monotonic(), True
-            result = await turn
+                    yield completion.chunk({"content": filler + " "})
+                    spoken.append(filler)
+                    first_chunk = first_chunk or time.monotonic()
+                elif settings.heartbeat_seconds > 0:
+                    yield completion.chunk({"content": ""})
+                    heartbeats += 1
+            result = turn.result()
             for sentence in _sentences(result.text):
+                if sentence in spoken:  # p. ej. la frase de espera si el turno no llegó
+                    continue
                 yield completion.chunk({"content": sentence + " "})
                 first_chunk = first_chunk or time.monotonic()
             if end_call and result.closed:
@@ -245,7 +350,13 @@ def build_voice_call_router(
             else:
                 yield completion.chunk({}, finish_reason="stop")
             yield "data: [DONE]\n\n"
-            _log_turn(candidate.id, started, first_chunk=first_chunk, waited=waited)
+            _log_turn(
+                candidate.id,
+                started,
+                first_chunk=first_chunk,
+                fillers=len(spoken),
+                heartbeats=heartbeats,
+            )
 
         return StreamingResponse(events(), media_type="text/event-stream")
 
@@ -301,13 +412,19 @@ class _Completion:
 
 
 def _log_turn(
-    candidate_id: str, started: float, *, first_chunk: float | None, waited: bool
+    candidate_id: str,
+    started: float,
+    *,
+    first_chunk: float | None,
+    fillers: int,
+    heartbeats: int,
 ) -> None:
     now = time.monotonic()
     logger.info(
-        "voice_llm_turn candidate=%s first_chunk_ms=%s turn_ms=%d waited=%s",
+        "voice_llm_turn candidate=%s first_chunk_ms=%s turn_ms=%d fillers=%d heartbeats=%d",
         candidate_id,
         round((first_chunk - started) * 1000) if first_chunk else None,
         round((now - started) * 1000),
-        waited,
+        fillers,
+        heartbeats,
     )
