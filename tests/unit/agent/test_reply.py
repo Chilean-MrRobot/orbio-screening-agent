@@ -89,6 +89,27 @@ def test_question_is_answered_with_the_faq_tool(
     assert len(outcome.usage) == 2
 
 
+def test_inline_faq_goes_in_the_prompt_without_tool(
+    make_agent, candidate: Candidate, knowledge: FakeKnowledgeBase
+) -> None:
+    faq = "### ¿Puedo repartir en bicicleta?\nNo, solo en moto o en coche."
+    agent, _, model = make_agent(
+        reply=["No, solo moto o coche. ¿Cuál usarías?"], faq_text=f"  {faq}\n"
+    )
+    add(candidate, MessageRole.CANDIDATE, "¿puede ser en bici?")
+
+    outcome = agent.reply(request_for(candidate, ask_fields=["vehicle_type"]))
+
+    request = model.requests[0]
+    system = system_text(request)
+    assert f"## FAQ de Grupo Sazón\n\n{faq}" in system
+    # La FAQ va antes de las instrucciones del turno: prefijo estable para el caché de OpenAI.
+    assert system.index(faq) < system.index("Pregunta el dato `vehicle_type`")
+    assert not request.config.tools
+    assert knowledge.queries == []
+    assert len(outcome.usage) == 1
+
+
 def test_faq_tool_reports_not_found_and_survives_failures() -> None:
     class Broken:
         def search(self, query: str, *, limit: int = 3) -> list[KnowledgeSnippet]:

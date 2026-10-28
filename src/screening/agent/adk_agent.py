@@ -35,6 +35,7 @@ from screening.clock import Clock
 from screening.config import AppConfig
 from screening.config.models import RegionConfig
 from screening.domain import Candidate, Message, MessageRole
+from screening.knowledge.chunking import faq_for_prompt, load_chunks
 from screening.ports import (
     ExtractionOutcome,
     KnowledgeBase,
@@ -69,12 +70,20 @@ class AdkScreeningAgent:
         reply_model: BaseLlm,
         prompts_dir: Path | str = DEFAULT_PROMPTS_DIR,
         sentiment_classifier: SentimentClassifier | None = None,
+        faq_text: str | None = None,
         tracing: bool | None = None,
         history_limit: int = 20,
         timer: Callable[[], float] = time.perf_counter,
     ) -> None:
+        """`faq_text`: la FAQ completa en el prompt de respuesta, sin tool de búsqueda.
+
+        Con una FAQ chica es más rápido (sin un paso de tool) y más confiable (Sofía la tiene
+        siempre, aunque la extracción no marque la pregunta). Sin `faq_text`, Sofía busca en
+        `knowledge` con la tool (RAG): el camino para una FAQ grande.
+        """
         self.config = config
         self.knowledge = knowledge
+        self.faq_text = faq_text.strip() if faq_text else None
         self.clock = clock
         self.pricing = pricing
         self.extraction_model = extraction_model
@@ -86,6 +95,9 @@ class AdkScreeningAgent:
         # Se renderizan al arrancar: un placeholder sin valor falla aquí y no en un turno.
         self._extraction_prompt = self.prompts.extraction.render()
         self._reply_prompt = self.prompts.reply.render(sla_hours=config.client.recruiter_sla_hours)
+        if self.faq_text:
+            # Antes de las instrucciones del turno: prefijo estable que OpenAI cachea.
+            self._reply_prompt += f"\n\n## FAQ de {config.client.name}\n\n{self.faq_text}"
         for region in config.regions.values():
             self._system_prompt(region)
 
@@ -123,6 +135,8 @@ class AdkScreeningAgent:
 
         if "sentiment_classifier" not in kwargs and os.environ.get("OPENAI_API_KEY"):
             kwargs["sentiment_classifier"] = SentimentClassifier.from_env(config)
+        if "faq_text" not in kwargs:
+            kwargs["faq_text"] = faq_for_prompt(load_chunks())
 
         return cls(
             config,
@@ -214,14 +228,15 @@ class AdkScreeningAgent:
         )
         history, pending = split_for_reply(candidate.messages, self.history_limit)
         new_message = "\n".join(m.text.strip() for m in pending) or NO_NEW_MESSAGES
-        faq_tool = _faq_tool(self.knowledge)
+        # Con la FAQ en el prompt no hay tool: un paso menos de modelo por turno.
+        tools = [] if self.faq_text else [_faq_tool(self.knowledge)]
 
         def attempt() -> AgentRun:
             agent = LlmAgent(
                 name="sofia",
                 model=self.reply_model,
                 instruction=lambda _ctx: instruction,
-                tools=[faq_tool],
+                tools=tools,
             )
             return run_agent(
                 agent,

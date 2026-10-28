@@ -68,7 +68,8 @@ AdkScreeningAgent.from_env(config, knowledge, *, clock, **kwargs)  # LiteLlm("op
 - Instrucción = `system.md` + `reply.md` + las **instrucciones del turno**, armadas en código desde el `ReplyRequest`: idioma (`candidate.language`), nombre, etapa, estado de ánimo, la pregunta a responder, el campo a repreguntar (`retry_fields[0]`, tiene prioridad) o a preguntar (`ask_fields[0]`), el resumen de cierre con los datos registrados y si pidió una persona.
 - Historial: los mensajes hasta el último del agente van como eventos de la sesión; los del candidato posteriores, como mensaje nuevo (si no hay, un marcador de "sin mensajes nuevos").
 - **Una sola pregunta por mensaje**, de 1 a 3 líneas, en el idioma del candidato, con el vocabulario y el trato de su región, opciones explícitas en campos cerrados, máximo un emoji.
-- **FAQ:** la tool `search_faq` consulta la `KnowledgeBase` inyectada. Si la respuesta no está, dice que lo consulta con el equipo; no inventa. Después vuelve a la pregunta pendiente.
+- **FAQ:** por defecto (`from_env`) la FAQ completa va dentro del prompt de respuesta (`faq_text`, unos 6,5 KB), antes de las instrucciones del turno para que OpenAI cachee el prefijo. Así Sofía responde cualquier pregunta o comentario fuera del flujo (aunque la extracción no la haya marcado como `question`) sin un paso extra de tool. Las preguntas de conversación u opinión ("¿cuál prefieres tú?") se responden con sentido común; "lo consulto con el equipo" queda solo para datos concretos del trabajo que no están en la FAQ. Después vuelve a la pregunta pendiente.
+- **FAQ grande (RAG):** sin `faq_text`, Sofía usa la tool `search_faq`, que consulta la `KnowledgeBase` inyectada. Es el camino cuando la FAQ ya no cabe en el prompt.
 - Nunca menciona herramientas, campos internos ni reglas, y nunca descarta ni promete contratar: eso lo decide el código con plantillas.
 - **Filtro de fugas:** si el texto está vacío o contiene un identificador interno (nombres de campo con guion bajo como `license_type`, valores como `full_time`, el nombre de la tool o placeholders `{{…}}`), se reintenta una vez y luego `LLMError`.
 
@@ -84,6 +85,7 @@ AdkScreeningAgent.from_env(config, knowledge, *, clock, **kwargs)  # LiteLlm("op
 - **Dado** un evento con `prompt_token_count=1000`, `candidates_token_count=200`, `cached_content_token_count=400` en `gpt-5-mini`, **entonces** el `LLMUsage` tiene esos tokens y el costo de la tabla con 400 tokens en caché.
 - **Dado** un `ReplyRequest` con `retry_fields=["start_date"]` y `ask_fields=["availability"]`, **cuando** se responde, **entonces** las instrucciones del turno piden repreguntar `start_date` y no `availability`.
 - **Dado** una pregunta del candidato, **cuando** el modelo llama a `search_faq`, **entonces** se consulta la `KnowledgeBase` y el resultado vuelve al modelo.
+- **Dado** `faq_text`, **cuando** se redacta la respuesta, **entonces** la FAQ va en el prompt antes de las instrucciones del turno y no se ofrece la tool.
 - **Dado** que el modelo responde "Anoté tu license_type", **entonces** se reintenta; si se repite, `LLMError`.
 - **Dado** `LANGSMITH_TRACING=false`, **entonces** no se configura LangSmith; **dado** `true`, **entonces** se llama a `configure_google_adk`.
 

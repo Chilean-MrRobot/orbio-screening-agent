@@ -53,6 +53,11 @@ def split_document(name: str, content: str) -> list[FaqChunk]:
     return chunks
 
 
+def faq_for_prompt(chunks: list[FaqChunk]) -> str:
+    """La FAQ completa como texto para el prompt: cada pregunta con su respuesta."""
+    return "\n\n".join(f"### {chunk.text}" for chunk in chunks)
+
+
 def load_chunks(faq_dir: Path | str = DEFAULT_FAQ_DIR) -> list[FaqChunk]:
     """Todos los `.md` de la carpeta, en orden alfabético para que el hash sea estable."""
     folder = Path(faq_dir)

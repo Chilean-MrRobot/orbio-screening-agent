@@ -6,7 +6,9 @@ import pytest
 
 from screening.knowledge.chunking import (
     DEFAULT_FAQ_DIR,
+    FaqChunk,
     FaqFormatError,
+    faq_for_prompt,
     load_chunks,
     slugify,
     split_document,
@@ -84,3 +86,18 @@ def test_repository_faq_has_a_reasonable_size() -> None:
 
     assert 15 <= len(chunks) <= 30
     assert len({c.id for c in chunks}) == len(chunks)
+
+
+def test_faq_for_prompt_lists_each_question_with_its_answer() -> None:
+    chunks = [
+        FaqChunk(id="a#1", source="a.md · ¿Uno?", text="¿Uno?\nRespuesta uno."),
+        FaqChunk(id="b#2", source="b.md · ¿Dos?", text="¿Dos?\nRespuesta dos."),
+    ]
+
+    assert faq_for_prompt(chunks) == "### ¿Uno?\nRespuesta uno.\n\n### ¿Dos?\nRespuesta dos."
+
+
+def test_repository_faq_for_prompt_covers_off_flow_questions() -> None:
+    text = faq_for_prompt(load_chunks(DEFAULT_FAQ_DIR))
+
+    assert "### ¿Puedo repartir en bicicleta o a pie?" in text
