@@ -84,11 +84,13 @@ Un turno nuestro tarda unos 5–8 s: extracción y respuesta con el LLM (spec 00
 el resumen al calificar. En una llamada, ese silencio parece un corte. Mitigaciones que no
 cambian el diseño:
 1. **Frase de espera:** si el turno no terminó en `VOICE_WAIT_AFTER_SECONDS`, se envía antes
-   la plantilla `voice_wait` ("Vale, déjame anotarlo."). ElevenLabs la dice mientras el
-   orquestador trabaja. No se guarda en la ficha. Con 0 se desactiva.
-2. **Streaming apenas existe la respuesta:** el texto sale en cuanto el turno termina, frase
-   por frase, y ElevenLabs empieza a sintetizar con la primera.
-3. **TTS y STT de ElevenLabs** de baja latencia (`eleven_flash_v2_5`) y WebRTC.
+   una frase de espera que se alterna por turno (`voice_wait`, `voice_wait_2`, `voice_wait_3`).
+   ElevenLabs la dice mientras el orquestador trabaja. No se guarda en la ficha. Con 0 se
+   desactiva.
+2. **Streaming apenas existe la respuesta:** el texto sale en cuanto el turno termina, entero en
+   un solo chunk (ver "Voz cortada").
+3. **TTS de ElevenLabs** `eleven_turbo_v2_5` sin optimización de latencia, y WebRTC (ver "Voz
+   cortada").
 4. **Stream vivo:** si el turno sigue después de `VOICE_WAIT_REPEAT_SECONDS`, se dice una
    segunda frase (`voice_wait_more`). Entre medio, cada `VOICE_HEARTBEAT_SECONDS` sale un chunk
    vacío (`delta.content = ""`), que no se dice. Ver "Corrección tras la prueba en producción".
@@ -200,6 +202,73 @@ No se sabe todavía si ElevenLabs cuenta los chunks vacíos para su timeout. Si 
 el límite real es de 15 s sin texto, y la segunda frase de espera a los 6 s lo cubre en los
 turnos de hasta ~20 s. Se confirma con `scripts/voice_call_probe.py` después de desplegar.
 
+## Voz cortada
+Al probar desde el teléfono, la voz de Sofía "se escucha súper cortada", poco natural.
+
+**Qué se midió:**
+- La llamada real del teléfono (WebRTC/LiveKit), con su transcript, sus métricas y su audio
+  descargados de la API de conversaciones de ElevenLabs.
+- Llamadas por WebSocket con `scripts/voice_call_probe.py --record <carpeta>`, que guarda un WAV
+  por turno. Para cada turno da los cortes que oiría un reproductor en vivo (audio que llega
+  cuando el anterior ya sonó) y las pausas dentro del audio.
+
+**Hallazgos en la llamada del teléfono (98 s, 7 turnos):**
+- **No hubo interrupciones** (eco que corte a Sofía), salvo la del candidato al final.
+- **El audio no viene cortado por dentro.** Las pausas en la voz de Sofía son de 0,2–0,5 s
+  entre frases.
+- **El ritmo sí está cortado.** Cada turno tiene este patrón:
+
+  | Paso | Duración |
+  |---|---|
+  | Silencio después de que habla el candidato | ~2,6 s |
+  | "Vale, déjame anotarlo." | 1,2 s |
+  | Silencio | 0,3–3,4 s |
+  | En los turnos largos: "Un momento más, ya casi lo tengo." | — |
+  | Otro silencio | — |
+  | La respuesta | — |
+
+  ElevenLabs mide la primera frase a los 2,2 s y la última a los 3,6–8,6 s.
+- **La frase de espera es idéntica en los 7 turnos.**
+- **TTS:** `eleven_flash_v2_5` con `optimize_streaming_latency: 3`, el máximo, que degrada la
+  entonación. Salida `pcm_16000`. TTFB del TTS: 0,09–0,11 s.
+- **El texto llegaba frase por frase,** cada una en su chunk. ElevenLabs entona mejor un texto
+  completo.
+- **Los ejemplos del chat** ("Por ejemplo: sí / no.") llegan con la barra al TTS.
+
+**Cambios:**
+1. **La respuesta va entera en un solo chunk** en lugar de frase por frase. Los heartbeats
+   vacíos se mantienen: no se dicen, en el audio no se ven cortes asociados y siguen haciendo
+   falta para el timeout de cascada.
+2. **Las frases de espera se alternan por turno:** "Vale, déjame anotarlo.", "Ajá, un segundo.",
+   "Muy bien, déjame ver.". La frase sale del historial de ElevenLabs, así que un reintento del
+   mismo turno elige la misma y no la repite. La segunda frase (`voice_wait_more`) queda solo
+   para turnos de más de 6 s.
+3. **TTS del agente** (`build_agent_config`, `deploy/elevenlabs_agent.py`):
+
+   | Ajuste | Antes | Ahora |
+   |---|---|---|
+   | Modelo | `eleven_flash_v2_5` | `eleven_turbo_v2_5` (configurable con `ELEVENLABS_AGENT_TTS_MODEL`; la voz por turnos de la spec 020 sigue con flash) |
+   | `optimize_streaming_latency` | 3 | 0 |
+   | Salida | `pcm_16000` | `pcm_24000` |
+
+   Ya está aplicado al agente, con un PATCH solo de `tts` que no toca el prompt. Medido con el
+   probe: el TTFB del TTS pasó de 0,09–0,11 s a 0,14–0,34 s, poco al lado de los 3–8 s del turno.
+4. **`speakable`:**
+   - "sí / no" se dice "sí, no";
+   - las viñetas de lista ("- ", "• ", "1. ") se quitan;
+   - cada línea termina en pausa (el resumen).
+
+   Sigue siendo idempotente, porque la llamada compara textos ya dichos.
+5. **Widget:** la comprobación del permiso suelta el micrófono enseguida. Antes, la llamada
+   corría con dos capturas abiertas, porque el SDK abre la suya.
+
+**Queda para después:**
+- El silencio de ~2,6 s entre el fin del candidato y la frase de espera: ~0,7 s de detección
+  de fin de turno y red, más `VOICE_WAIT_AFTER_SECONDS` (1,5 s). Bajarlo a ~1 s acorta la
+  espera pero hace que la frase suene casi siempre.
+- El streaming por token de la respuesta (ver "Latencia").
+- Los ejemplos tipo chat en el prompt de respuesta. Los prompts están en cambio en otra rama.
+
 ## Criterios de aceptación
 - **Dado** un pedido sin el bearer correcto, **cuando** llega al endpoint LLM, **entonces**
   401 y no se llama al orquestador.
@@ -207,7 +276,9 @@ turnos de hasta ~20 s. Se confirma con `scripts/voice_call_probe.py` después de
   mensaje es del usuario, **entonces** pasa por el orquestador (datos guardados, `channel=web`)
   y la respuesta trae solo los mensajes nuevos de Sofía, en formato OpenAI (SSE o JSON).
 - **Dado** un turno lento, **cuando** pasan `VOICE_WAIT_AFTER_SECONDS`, **entonces** el
-  primer chunk es la frase de espera y después llega la respuesta.
+  primer chunk es la frase de espera y después llega la respuesta, entera en un solo chunk.
+- **Dado** el segundo turno del candidato, **cuando** hace falta frase de espera, **entonces**
+  es distinta de la del primero (`voice_wait_2`).
 - **Dado** que la conversación se cierra en el turno y existe la herramienta `end_call`,
   **cuando** termina el texto, **entonces** el stream trae la llamada a `end_call`.
 - **Dado** `/voice/call/start`, **cuando** ElevenLabs entrega el token, **entonces** la

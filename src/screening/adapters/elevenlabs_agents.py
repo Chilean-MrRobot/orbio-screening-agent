@@ -20,6 +20,13 @@ from screening.domain import Language
 LLM_SECRET_NAME = "orbio-voice-llm-secret"
 LLM_PATH = "/voice/llm/v1"  # ElevenLabs le agrega /chat/completions
 LLM_MODEL_ID = "orbio-screening-orchestrator"
+# Voz de la llamada: calidad antes que los ~100 ms que ahorran flash y la optimización de
+# latencia, que no se notan al lado de los segundos del turno (medido en la spec 022).
+AGENT_TTS_MODEL = "eleven_turbo_v2_5"
+AGENT_TTS_SETTINGS: dict[str, Any] = {
+    "optimize_streaming_latency": 0,  # 3 (por defecto) degrada la entonación
+    "agent_output_audio_format": "pcm_24000",  # 16 kHz suena a teléfono
+}
 # El prompt no decide nada: lo que dice Sofía sale del orquestador. Solo lleva el
 # `candidate_id` (variable dinámica) para que nuestro endpoint encuentre la ficha.
 AGENT_PROMPT = (
@@ -170,7 +177,7 @@ def build_agent_config(spec: AgentSpec, *, secret_id: str) -> dict[str, Any]:
                     },
                 },
             },
-            "tts": {"voice_id": spec.voice_id, "model_id": spec.tts_model},
+            "tts": {"voice_id": spec.voice_id, "model_id": spec.tts_model, **AGENT_TTS_SETTINGS},
             "language_presets": presets,
         },
         "platform_settings": {

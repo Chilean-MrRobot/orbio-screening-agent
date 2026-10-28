@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+from array import array
 from pathlib import Path
 from types import ModuleType
 
@@ -77,3 +78,25 @@ def test_pings_do_not_keep_the_turn_open() -> None:
     assert timings is not None and [t.said for t in timings] == [None, "sí", "Madrid"]
     for timing in timings[1:]:
         assert timing.first < timing.last  # frase de espera, después la respuesta
+
+
+RATE = 1000  # muestras por segundo: 2000 bytes de PCM = 1 s
+
+
+def test_playback_gaps_are_chunks_that_arrive_after_the_previous_one_sounded() -> None:
+    probe = load_probe()
+    second = b"\x00\x00" * RATE
+    # 1 s de audio a los 0 s; el siguiente llega a los 0,5 s (sin corte) y el tercero a los
+    # 3 s, cuando el reproductor terminó a los 2 s: 1 s de corte después de 2 s de audio.
+    chunks = [(0.0, second), (0.5, second), (3.0, second)]
+
+    assert probe.playback_gaps(chunks, RATE) == [(2.0, 1.0)]
+
+
+def test_silences_inside_the_audio() -> None:
+    probe = load_probe()
+    loud, quiet = array("h", [2000, -2000]) * (RATE // 4), array("h", [0]) * (RATE // 2)
+    pcm = (loud + quiet + loud + quiet).tobytes()  # 0,5 s voz, 0,5 s silencio, ...
+
+    # La pausa del medio cuenta; la del final, no (es el fin del turno).
+    assert probe.silences(pcm, RATE, min_silence=0.3) == [(0.5, 0.5)]

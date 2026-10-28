@@ -145,3 +145,20 @@ def test_settings_from_env() -> None:
 )
 def test_speakable_removes_emojis_and_markdown(text: str, expected: str) -> None:
     assert speakable(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("¿Tienes carnet? Por ejemplo: sí / no.", "¿Tienes carnet? Por ejemplo: sí, no."),
+        ("Turno mañana/tarde", "Turno mañana/tarde"),  # sin espacios no es una alternativa
+        (
+            "Tu resumen:\n- Carnet B\n- Moto propia\n\n1. Madrid",
+            "Tu resumen: Carnet B. Moto propia. Madrid",
+        ),
+        ("• Media jornada\n• Tarde", "Media jornada. Tarde"),
+    ],
+)
+def test_speakable_reads_lists_and_slashes_naturally(text: str, expected: str) -> None:
+    assert speakable(text) == expected
+    assert speakable(expected) == expected  # idempotente: la llamada compara textos ya dichos

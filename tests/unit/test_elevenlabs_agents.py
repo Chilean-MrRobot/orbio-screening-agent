@@ -9,6 +9,7 @@ import pytest
 
 from screening.adapters.elevenlabs import VoiceError
 from screening.adapters.elevenlabs_agents import (
+    AGENT_TTS_MODEL,
     LLM_SECRET_NAME,
     AgentSpec,
     ElevenLabsAgents,
@@ -123,7 +124,13 @@ def test_agent_config_points_to_our_llm_with_the_secret() -> None:
     assert prompt["cascade_timeout_seconds"] == 15
     assert prompt["backup_llm_config"] == {"preference": "disabled"}
     tts = config["conversation_config"]["tts"]
-    assert tts == {"voice_id": "voice-1", "model_id": "eleven_flash_v2_5"}
+    # Calidad de voz antes que ~100 ms de latencia (la voz sonaba cortada en el teléfono).
+    assert tts == {
+        "voice_id": "voice-1",
+        "model_id": "eleven_flash_v2_5",
+        "optimize_streaming_latency": 0,
+        "agent_output_audio_format": "pcm_24000",
+    }
     english = config["conversation_config"]["language_presets"]["en"]["overrides"]["agent"]
     assert english == {"first_message": "Hi {{first_name}}!", "language": "en"}
     override = config["platform_settings"]["overrides"]["conversation_config_override"]
@@ -200,4 +207,7 @@ def test_deploy_script_runs_sync(
     out = capsys.readouterr().out
     assert "ELEVENLABS_AGENT_ID=agent-1" in out
     assert "llm-secret-456" not in out and "el-key-123" not in out
+    agent = next(iter(fake.agents.values()))
+    # El TTS de la llamada no sigue a ELEVENLABS_TTS_MODEL (flash, para la voz por turnos).
+    assert agent["conversation_config"]["tts"]["model_id"] == AGENT_TTS_MODEL
     assert module.main(["--api-url", "https://api.example"], env={"ELEVENLABS_API_KEY": "k"}) == 2

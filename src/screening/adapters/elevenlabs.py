@@ -25,6 +25,10 @@ _EMOJI = re.compile(
 # `_` solo como marca (`_sí_`): entre letras es parte de un nombre (`{{first_name}}`).
 _MARKDOWN = re.compile(r"[*`#>~]+|(?<!\w)_+|_+(?!\w)")
 _EMOJI_BETWEEN_SENTENCES = re.compile(r"(?<=[\w)])\s*\x00+\s*(?=[A-ZÁÉÍÓÚÑ¿¡])")
+# Viñetas de lista ("- ", "• ", "1. ", "2) ") al comienzo de una línea.
+_BULLET = re.compile(r"^\s*(?:[-–•]|\d+[.)])\s+")
+# "sí / no": la voz leería la barra; como pausa breve suena natural.
+_SLASH = re.compile(r"(?<=\w)\s+/\s+(?=\w)")
 _SPACES = re.compile(r"\s+")
 
 
@@ -74,11 +78,25 @@ class _SttResponse(BaseModel):
 
 
 def speakable(text: str) -> str:
-    """El texto de un mensaje sin emojis ni marcas de Markdown, para sintetizarlo."""
+    """El texto de un mensaje sin emojis ni marcas de Markdown, para sintetizarlo.
+
+    Idempotente: el texto ya limpio no cambia (la llamada compara lo que ElevenLabs ya dijo).
+    """
     text = _EMOJI.sub("\x00", text)
     # Un emoji que separa dos frases ("… Sazón 👋 Vi que …") deja un punto, para la entonación.
     text = _EMOJI_BETWEEN_SENTENCES.sub(". ", text).replace("\x00", " ")
-    return _SPACES.sub(" ", _MARKDOWN.sub("", text)).strip()
+    text = _SLASH.sub(", ", _MARKDOWN.sub("", text))
+    return " ".join(_lines_as_sentences(text))
+
+
+def _lines_as_sentences(text: str) -> list[str]:
+    """Cada línea (p. ej. una viñeta del resumen) termina en pausa, sin la viñeta."""
+    lines = [_SPACES.sub(" ", _BULLET.sub("", line)).strip() for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    return [
+        line if i == len(lines) - 1 or line[-1] in ".!?…:;," else line + "."
+        for i, line in enumerate(lines)
+    ]
 
 
 class ElevenLabsVoice:

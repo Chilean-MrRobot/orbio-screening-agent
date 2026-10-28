@@ -3,7 +3,7 @@
 Uso: python deploy/elevenlabs_agent.py --api-url <URL pública de la API> [--env .env]
 
 Lee del `.env` (o del entorno) `ELEVENLABS_API_KEY`, `VOICE_LLM_SECRET` y, si existen,
-`ELEVENLABS_AGENT_ID`, `ELEVENLABS_VOICE_ID` y `ELEVENLABS_TTS_MODEL`. Sube el secreto al
+`ELEVENLABS_AGENT_ID`, `ELEVENLABS_VOICE_ID` y `ELEVENLABS_AGENT_TTS_MODEL`. Sube el secreto al
 workspace de ElevenLabs, crea o actualiza el agente con Custom LLM hacia
 `<api-url>/voice/llm/v1` e imprime el `ELEVENLABS_AGENT_ID` que hay que guardar.
 """
@@ -19,7 +19,12 @@ import httpx
 from dotenv import dotenv_values
 
 from screening.adapters.elevenlabs import ElevenLabsSettings, VoiceError
-from screening.adapters.elevenlabs_agents import AgentSpec, ElevenLabsAgents, sync_agent
+from screening.adapters.elevenlabs_agents import (
+    AGENT_TTS_MODEL,
+    AgentSpec,
+    ElevenLabsAgents,
+    sync_agent,
+)
 from screening.config import load_config
 from screening.conversation.messages import agent_first_message
 from screening.domain import Language
@@ -56,7 +61,7 @@ def main(
         name=args.name,
         api_url=args.api_url,
         voice_id=voice.voice_id,
-        tts_model=voice.tts_model,
+        tts_model=env.get("ELEVENLABS_AGENT_TTS_MODEL") or AGENT_TTS_MODEL,
         first_messages={lang: agent_first_message(config, lang) for lang in Language},
     )
     client = ElevenLabsAgents(voice.api_key, transport=transport)
