@@ -48,6 +48,8 @@ DISABLED_DETAIL = (
 )
 _CANDIDATE_ID = re.compile(r"candidate_id:\s*([\w-]+)")
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+# Frases de espera que se alternan por turno: la misma en cada turno suena a máquina.
+WAIT_TEMPLATES = ("voice_wait", "voice_wait_2", "voice_wait_3")
 
 
 class ConversationTokens(Protocol):
@@ -163,6 +165,16 @@ def is_retry(candidate: Candidate, text: str, messages: list[dict[str, Any]]) ->
     return not reply or reply not in previous_assistant(messages)
 
 
+def wait_template(messages: list[dict[str, Any]]) -> str:
+    """La frase de espera de este turno, según cuántas veces habló el candidato.
+
+    Sale del historial de ElevenLabs y no de la ficha: un reintento del mismo turno elige
+    la misma frase (y no la repite si ya se dijo).
+    """
+    answers = sum(1 for m in messages if m.get("role") == "user")
+    return WAIT_TEMPLATES[max(0, answers - 1) % len(WAIT_TEMPLATES)]
+
+
 def last_agent_text(candidate: Candidate) -> str:
     agent = [m for m in candidate.messages if m.role == MessageRole.AGENT]
     return speakable(agent[-1].text) if agent else ""
@@ -267,7 +279,7 @@ def build_voice_call_router(
         else:
             updated = wait_for_reply(candidate.id)
             if updated is None:
-                wait = speakable(render_template("voice_wait", candidate, config))
+                wait = speakable(render_template(wait_template(messages), candidate, config))
                 return TurnResult(wait, False)
         said = spoken_after_last_user(messages)
         reply = unspoken(new_agent_text(updated), said)
@@ -305,7 +317,7 @@ def build_voice_call_router(
         fillers = [
             (seconds, speakable(render_template(key, candidate, config)))
             for seconds, key in (
-                (settings.wait_after_seconds, "voice_wait"),
+                (settings.wait_after_seconds, wait_template(messages)),
                 (settings.wait_repeat_seconds, "voice_wait_more"),
             )
             if seconds > 0
@@ -339,10 +351,11 @@ def build_voice_call_router(
                     yield completion.chunk({"content": ""})
                     heartbeats += 1
             result = turn.result()
-            for sentence in _sentences(result.text):
-                if sentence in spoken:  # p. ej. la frase de espera si el turno no llegó
-                    continue
-                yield completion.chunk({"content": sentence + " "})
+            # La respuesta entera en un solo chunk: el TTS la entona como un todo en vez de
+            # frase por frase. Sin las frases ya dichas (la de espera, si el turno no llegó).
+            reply = " ".join(s for s in _sentences(result.text) if s not in spoken)
+            if reply:
+                yield completion.chunk({"content": reply + " "})
                 first_chunk = first_chunk or time.monotonic()
             if end_call and result.closed:
                 yield completion.chunk({"tool_calls": [completion.end_call(index=0)]})

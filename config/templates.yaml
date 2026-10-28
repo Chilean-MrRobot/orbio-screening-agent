@@ -92,10 +92,19 @@ templates:
     en: "{first_name}, since we didn't hear back, a {client_name} recruiter will contact you to schedule the interview."
 
   # Llamada en tiempo real (spec 022): se dicen pero no se guardan en la ficha.
-  # Frase de espera si el turno tarda más de VOICE_WAIT_AFTER_SECONDS.
+  # Frase de espera si el turno tarda más de VOICE_WAIT_AFTER_SECONDS. Se alternan
+  # (voice_wait, voice_wait_2, voice_wait_3) para no decir lo mismo en cada turno.
   voice_wait:
     es: "Vale, déjame anotarlo."
     en: "Okay, let me note that down."
+
+  voice_wait_2:
+    es: "Ajá, un segundo."
+    en: "Uh-huh, one second."
+
+  voice_wait_3:
+    es: "Muy bien, déjame ver."
+    en: "Alright, let me see."
 
   # Segunda frase si el turno sigue después de VOICE_WAIT_REPEAT_SECONDS.
   voice_wait_more:

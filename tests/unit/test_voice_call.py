@@ -15,11 +15,13 @@ from pydantic import SecretStr
 from screening.adapters.elevenlabs import VoiceError, speakable
 from screening.adapters.memory import InMemoryCandidateRepository
 from screening.api.voice_call import (
+    WAIT_TEMPLATES,
     CallSession,
     CallSettings,
     build_voice_call_router,
     candidate_id_from,
     user_text_from,
+    wait_template,
 )
 from screening.api.web_chat import WebChatService
 from screening.channels import CandidateBusyError, InboundBatch, WebChatChannel
@@ -855,4 +857,49 @@ def test_stream_keeps_alive_while_the_turn_runs(
     assert len([c for c in contents[1:] if c == ""]) >= 3  # heartbeats
     stored = repository.get(session.chat.candidate_id)
     assert stored is not None
-    assert " ".join(spoken[2:]) == speakable(stored.messages[-1].text)
+    # La respuesta va entera en un chunk: frase por frase, el TTS cortaba la entonación.
+    assert spoken[2:] == [speakable(stored.messages[-1].text)]
+
+
+def test_wait_phrase_alternates_by_turn(app_config: AppConfig) -> None:
+    def history(answers: int) -> list[dict]:
+        return completion_body("c1", *["sí"] * answers)["messages"]
+
+    picked = [wait_template(history(n)) for n in range(1, 5)]
+
+    assert picked == ["voice_wait", "voice_wait_2", "voice_wait_3", "voice_wait"]
+    for key in WAIT_TEMPLATES:  # existen en los dos idiomas
+        assert set(app_config.templates[key]) >= {"es", "en"}
+
+
+def test_second_turn_uses_another_wait_phrase(
+    orchestrator: ConversationOrchestrator,
+    repository: InMemoryCandidateRepository,
+    clock: FixedClock,
+    app_config: AppConfig,
+    tokens: FakeTokens,
+) -> None:
+    client = make_client(
+        orchestrator,
+        repository,
+        clock,
+        app_config,
+        tokens,
+        settings(wait_after_seconds=0.05),
+        handler=SlowHandler(orchestrator, 0.3),
+    )
+    session = start(client)
+    body = completion_body(session.chat.candidate_id, "sí", stream=True)
+    body["messages"] += [
+        {"role": "assistant", "content": "¿Tienes carnet?"},
+        {"role": "user", "content": "sí, el B"},
+    ]
+
+    response = client.post(LLM_PATH, json=body, headers=AUTH)
+
+    first = next(c for c in map(content_of, sse_events(response)) if c)
+    assert first.strip() == app_config.templates["voice_wait_2"]["es"]
+
+
+def content_of(event: dict) -> str | None:
+    return event["choices"][0]["delta"].get("content")

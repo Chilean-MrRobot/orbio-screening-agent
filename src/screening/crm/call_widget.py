@@ -83,8 +83,12 @@ $("call").onclick = async () => {
     return;
   }
   setStatus("Pidiendo el micrófono…");
-  try { await navigator.mediaDevices.getUserMedia({ audio: true }); }
-  catch (e) {
+  try {
+    // Solo para pedir el permiso: se suelta enseguida. Si no, la llamada corre con dos
+    // capturas del micrófono abiertas (el SDK abre la suya).
+    const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+    probe.getTracks().forEach((track) => track.stop());
+  } catch (e) {
     // El token sigue sin usar: se puede reintentar después de permitir el micrófono.
     setStatus("Sin micrófono no se puede llamar. Permítelo en el navegador o usa «Postular».");
     return;
