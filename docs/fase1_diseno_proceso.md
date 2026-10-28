@@ -8,7 +8,7 @@ Hoy, 13 recruiters hacen ~975 llamadas por semana para ~1.000 postulantes. El 60
 
 El diagnóstico es de **canal, orden y velocidad**:
 
-- **Canal:** contacto por WhatsApp (asíncrono) a los minutos de postular, en vez de una llamada que no se contesta. El canal es intercambiable: el demo corre por **chat web** y **voz en el navegador** con el mismo agente, y WhatsApp está implementado para producción.
+- **Canal:** contacto por WhatsApp (asíncrono) a los minutos de postular, en vez de una llamada que no se contesta. El canal es intercambiable: el demo corre por **chat web**, **voz por turnos** y **llamada en tiempo real** en el navegador, siempre con el mismo agente. WhatsApp está implementado para producción.
 - **Orden:** las preguntas eliminatorias van primero, así que un candidato no apto sale en menos de un minuto.
 - **Velocidad:** el recruiter solo recibe leads limpios y ordenados por puntaje. Deja de filtrar y pasa a cerrar.
 
@@ -16,7 +16,7 @@ El diagnóstico es de **canal, orden y velocidad**:
 
 ```
 JSON del portal → Validación de entrada → Agente conversacional por etapas → Reglas (código) → Puntaje (código)
-                                              ↑ RAG (FAQ) · clasificador de emoción · memoria en BD
+                                              ↑ FAQ · clasificador de emoción · memoria en BD
                          └──────────────── cada paso actualiza la ficha en BD → panel en vivo ──────────────┘
 ```
 
@@ -34,12 +34,14 @@ JSON del portal → Validación de entrada → Agente conversacional por etapas 
 |---|---|---|---|
 | 0 | **Entrada** (sin IA) | Validar el JSON del portal, crear o unir la ficha y enviar el primer WhatsApp | Teléfono inválido o ausente → *Datos inválidos* (revisión de HR). Mismo teléfono ya registrado → se une a la ficha existente. Falta un campo opcional → se pregunta en el chat |
 | 1 | **Bienvenida** | Presentarse, confirmar el nombre y la vacante, pedir consentimiento de datos | Sin consentimiento → cierre amable, *Descartado (sin consentimiento)* |
-| 2 | **Eliminatorias** | Licencia, tipo de licencia, vehículo y ciudad. Las reglas se evalúan **después de cada respuesta** | Falla una regla → cierre amable con motivo, *Descartado (motivo)* |
+| 2 | **Eliminatorias** | Licencia, tipo de licencia, vehículo y ciudad. Las reglas se evalúan **después de cada respuesta** | Falla una regla → el agente **confirma el dato una vez** con una pregunta neutra. Si vuelve a fallar → cierre amable con motivo, *Descartado (motivo)* |
 | 3 | **Perfil** | Experiencia, disponibilidad, horario, fecha de inicio y permiso de trabajo | No descarta, solo alimenta el puntaje |
 | 4 | **Cierre** | Resumir los datos para que el candidato los confirme y contarle los próximos pasos | Corrige un dato → se actualiza y se vuelven a correr las reglas. Confirma → se calcula el puntaje, *Calificado* |
 | 5 | **Agendamiento** (opcional, YAML) | Ofrecer 3 horarios de entrevista en su zona horaria y reservar el elegido | Elige uno → *Entrevista* agendada. Ninguno sirve dos veces → *Calificado* con "agendar manualmente" para el recruiter |
 
-En cualquier etapa, si el candidato hace una pregunta, el agente consulta el **RAG** (FAQ de Grupo Sazón), responde y vuelve a la pregunta pendiente.
+En cualquier etapa, si el candidato pregunta o comenta algo, el agente **primero responde y después vuelve a la pregunta pendiente**, como haría una persona:
+- **Preguntas sobre el trabajo:** responde con la **FAQ de Grupo Sazón**. Hoy la FAQ va completa en el prompt porque es chica; con una FAQ grande se busca con RAG.
+- **Preguntas de conversación** ("¿cuál prefieres tú?"): responde con sentido común.
 
 ## 4. Campos y validación
 
@@ -81,8 +83,11 @@ En cualquier etapa, si el candidato hace una pregunta, el agente consulta el **R
 | **No responde (nunca o a mitad)** | Cadencia configurable en YAML, distinta para "nunca respondió" y "abandonó a mitad". Por defecto: WhatsApp a las 0 h → WhatsApp a las 24 h → SMS a las 72 h → mensaje de cierre por WhatsApp a los 5 días y estado *Sin respuesta*. Si responde, se cancelan los toques pendientes y retoma en la etapa pendiente. Cada toque enviado queda registrado en el panel. Fuera de la ventana de 24 h, WhatsApp exige plantillas aprobadas por Meta |
 | **Respuesta inválida** | Se repregunta con un ejemplo. Tras 2 intentos fallidos, el campo queda `needs_review` y la conversación sigue |
 | **Respuesta ambigua** | Se pide precisión: "pronto" → fecha; "algo de experiencia" → años y plataforma |
+| **Respuesta aproximada** | Se interpreta la intención, no las palabras exactas, como haría un recruiter. Ejemplos: "cualquiera" a la disponibilidad → jornada completa; "me sirven todos" → el primer horario. La excepción es la ciudad: un barrio suelto no se adivina como ciudad, se vuelve a preguntar |
+| **Dato eliminatorio mal entendido** (transcripción de voz o tipeo) | Antes de descartar, el agente vuelve a preguntar el dato una vez, con un texto fijo y neutro. Solo descarta si la respuesta vuelve a fallar. El consentimiento negado se respeta a la primera |
 | **Cambio de idioma (ES ↔ EN)** | El agente responde en el idioma del último mensaje del candidato, sin una regla aparte. Se guarda `language` para los recordatorios |
-| **Pregunta fuera del flujo** | Responde con el RAG. Si la respuesta no está en la FAQ, no inventa: "Lo consulto con el equipo". Después vuelve a la pregunta pendiente |
+| **Pregunta fuera del flujo** | Responde primero y después vuelve a la pregunta pendiente. <ul><li>**Sobre el trabajo:** con la FAQ; si la FAQ responde a medias, dice lo que sabe y que el detalle se ve en la entrevista.</li><li>**Propone algo que no se puede** ("¿puede ser en bicicleta?"): explica el requisito.</li><li>**Pide un dato concreto que no está en la FAQ:** no inventa; dice con naturalidad que se lo confirman en la entrevista.</li></ul> |
+| **Quiere terminar la conversación** ("corta la llamada", "hablamos luego") | No es un opt-out: la ficha queda abierta y los recordatorios lo retoman |
 | **Contenido inapropiado u off-topic** | Redirige con amabilidad. Si se repite, cierra la conversación y marca la ficha para HR |
 | **Pide hablar con una persona** | Se marca `human_requested` en el panel y se le avisa que lo contactarán |
 | **Corrige un dato anterior** | Se actualiza el campo y se vuelven a evaluar las reglas |

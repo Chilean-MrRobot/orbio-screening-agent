@@ -427,7 +427,7 @@ Por eso se prueba sobre el despliegue.
 | Suite | Casos | Accuracy | Latencia p50 | Qué evalúa |
 |---|---|---|---|---|
 | `extraction` | 46 | 100% | 2,2 s | Mensaje → campos normalizados: ES, MX, EN, ambiguos, respuestas aproximadas ("cualquier día"), correcciones, opt-out, preguntas, horarios |
-| `reply` | 14 | 100% | 1,6 s | Pedido del orquestador → mensaje de Sofía: tono, vocabulario, una pregunta, FAQ, preguntas fuera del flujo |
+| `reply` | 16 | 100% | 1,9 s | Pedido del orquestador → mensaje de Sofía: tono, vocabulario, una pregunta, FAQ, preguntas fuera del flujo, inglés sin mezclar idiomas |
 | `summary` | 8 | 100% | 1,7 s | Ficha + conversación → resumen sin inventar datos |
 | `sentiment` | 22 | 95,5% | 0,8 s | Mensajes → emoción (ironía, mayúsculas, mensajes cortos) |
 | `rag` | 15 | 93,3% | 1,4 s | Preguntas de la FAQ y preguntas que no están (debe reconocerlo) |
@@ -516,29 +516,86 @@ Lo que habría que agregar a ese volumen:
 
 ## 11. Limitaciones y mejoras con más tiempo
 
-En orden de impacto:
+El sistema se construyó rápido y priorizó que funcione de punta a punta. Esto es lo que haría
+distinto o agregaría, agrupado por tema.
 
-1. **Latencia.** Un turno tarda ~4–5 s: extracción y respuesta en serie. En la llamada un
-   asentimiento cubre la espera, pero se nota. Siguientes pasos, medidos con las evals:
-   - una sola llamada al LLM para la voz;
-   - streaming por token de la respuesta;
-   - saltar el LLM en respuestas triviales ("sí", "ok") cuando se espera un sí/no.
-2. **WhatsApp real** con la cuenta de Meta del cliente. El código está listo:
-   `deploy.ps1 -WhatsApp`.
-3. **Integración con el ATS** del cliente ([diseño listo](docs/integracion_ats.md)) y
-   **calendario real** para el agendamiento (Google Calendar o Calendly del recruiter, en vez
-   de las ventanas del YAML).
-4. **Llamada telefónica saliente** (ElevenLabs + Twilio), con un botón "llamar" en el panel. El
-   orquestador es el mismo: solo cambia el canal.
-5. **Que Sofía nunca diga algo que el sistema no registró.** El turno de respuesta debería
-   recibir explícitamente qué se guardó en ese turno. Ante "¿cuánto falta?", decir cuántas
-   preguntas quedan, que el orquestador ya lo sabe.
-6. **Evals en CI**, con un subconjunto barato en cada PR.
-7. **Guardrail adicional** fuera del prompt: moderación de entrada y salida.
-8. **Contenido real:**
-   - la FAQ y los rangos de pago son ficticios;
-   - la tabla de licencias está simplificada;
-   - la zona se valida solo por ciudad, no por barrio ni distancia.
+**Producto: que hablar con Sofía se sienta como hablar con una persona.** El objetivo es una
+conversación tan natural como con un recruiter, pero siempre transparente de que es un
+asistente. Esa transparencia no es opcional: el AI Act europeo obliga a informar que se habla
+con una IA, y clasifica el reclutamiento como uso de alto riesgo. Hoy hay partes que no se
+sienten naturales. Las mejoras:
+- **voces por región**, con acento de España y de México;
+- **ritmo de conversación** más humano en la voz;
+- **una experiencia de usuario** pensada para el candidato, más allá del demo.
+
+**Latencia de la capa de LLM.** Un turno tarda ~4–5 s: extracción, respuesta y emoción en
+serie, un diseño simple elegido para iterar rápido. En la llamada un asentimiento cubre la
+espera, pero se nota. Siguientes pasos, medidos con las evals:
+- una sola llamada al LLM en voz;
+- streaming por token de la respuesta;
+- saltar el LLM en respuestas triviales ("sí", "ok") cuando se espera un sí/no.
+
+**Turnos de voz robustos.** ElevenLabs llama a nuestro LLM con transcripciones *provisionales*
+mientras el candidato todavía habla. La confirmación antes de descartar (spec 023) evita el
+daño, pero es un parche. Lo correcto es que el sistema decida cuándo un turno está terminado,
+o que solo procese la transcripción final.
+
+**Evaluación.** El framework de evaluación quedó incompleto por tiempo. En un producto de IA
+generativa de uso masivo, la evaluación debería llevarse entre el 30% y el 50% del esfuerzo.
+Faltan:
+- **simulaciones de conversaciones completas**, con candidatos sintéticos (hoy se evalúan
+  turnos sueltos);
+- **etiquetado humano** de conversaciones reales;
+- **evals en CI**, con un subconjunto barato en cada PR;
+- **historial de corridas** (experiments en LangSmith o BigQuery) en vez de reportes locales;
+- **métricas en producción:** tasa de completitud, abandono por pregunta, descartes revertidos
+  por el recruiter.
+
+**Escalabilidad.**
+- **Calentamiento masivo.** La pasada ya consulta por índice, pagina y tiene un tope. Pero los
+  envíos salen dentro de la pasada: a 10K candidatos serían miles de mensajes en minutos.
+  Cada envío debería ir a una cola (Cloud Tasks, como los mensajes entrantes, o Pub/Sub) con
+  límite de tasa, porque WhatsApp limita los mensajes por segundo de cada número.
+- **Frontend.** Streamlit sirvió para el demo: guarda estado por sesión y vuelve a ejecutar la
+  página entera en cada interacción. El panel ya habla solo con la API, así que se puede
+  cambiar por un frontend real (React o similar) sin tocar el backend. En producción, el
+  candidato entra por WhatsApp, no por el chat web.
+- Más modularidad en el despliegue: separar en servicios propios lo que escala distinto (la
+  voz, el webhook, las tareas).
+- El resto, en la sección 9: base por país, métricas agregadas y límite de tasa.
+
+**Cumplimiento y seguridad** (el reclutamiento es de alto riesgo bajo el AI Act):
+- **supervisión humana** de los descartes;
+- **auditoría de sesgos** del puntaje y de la transcripción con distintos acentos;
+- **retención y borrado automático** de datos (GDPR);
+- **moderación** de entrada y salida, como guardrail fuera del prompt;
+- **pruebas de *prompt injection***;
+- **alertas** cuando suben la tasa de errores o el costo (hoy hay trazas y registros, pero nada
+  avisa).
+
+El motor de reglas auditable ya juega a favor: cada descarte tiene una regla concreta.
+
+**Canales e integraciones.**
+- **WhatsApp real** con la cuenta de Meta del cliente. El código está listo:
+  `deploy.ps1 -WhatsApp`.
+- **Multicanal:** llamada telefónica saliente (ElevenLabs + Twilio, con un botón "llamar" en el
+  panel), SMS real y correo. El orquestador es el mismo: solo cambia el canal.
+- **Integración con el ATS** del cliente ([diseño listo](docs/integracion_ats.md)) y
+  **calendario real** para el agendamiento (Google Calendar o Calendly del recruiter, en vez de
+  las ventanas del YAML).
+- **Multi-cliente.** Cada cliente de Orbio ya es un YAML distinto, pero un despliegue atiende a
+  uno solo. Para varios hace falta identificar al cliente en los datos y cargar su
+  configuración.
+
+**Detalles de conversación.**
+- **Que Sofía nunca diga algo que el sistema no registró:** el turno de respuesta debería
+  recibir explícitamente qué se guardó en ese turno.
+- **Ante "¿cuánto falta?",** decir cuántas preguntas quedan; el orquestador ya lo sabe.
+
+**Contenido real.**
+- La FAQ y los rangos de pago son ficticios.
+- La tabla de licencias está simplificada.
+- La zona se valida solo por ciudad, no por barrio ni distancia.
 
 ## 12. Cómo se construyó
 
