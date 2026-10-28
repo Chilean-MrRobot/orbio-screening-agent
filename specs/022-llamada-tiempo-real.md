@@ -239,10 +239,13 @@ Al probar desde el teléfono, la voz de Sofía "se escucha súper cortada", poco
 1. **La respuesta va entera en un solo chunk** en lugar de frase por frase. Los heartbeats
    vacíos se mantienen: no se dicen, en el audio no se ven cortes asociados y siguen haciendo
    falta para el timeout de cascada.
-2. **Las frases de espera se alternan por turno:** "Vale, déjame anotarlo.", "Ajá, un segundo.",
-   "Muy bien, déjame ver.". La frase sale del historial de ElevenLabs, así que un reintento del
-   mismo turno elige la misma y no la repite. La segunda frase (`voice_wait_more`) queda solo
-   para turnos de más de 6 s.
+2. **Las frases de espera se alternan por turno.** La frase sale del historial de ElevenLabs, así
+   que un reintento del mismo turno elige la misma y no la repite. La segunda frase
+   (`voice_wait_more`) queda solo para turnos de más de 6 s.
+   - Primera versión: "Vale, déjame anotarlo.", "Ajá, un segundo." y "Muy bien, déjame ver.".
+   - En la prueba del usuario sonaban raras: afirmaban algo que no pasaba, como "anotarlo"
+     después de una pregunta. Ahora son asentimientos cortos y neutros: "Ajá.", "Mmm, vale."
+     y "Okey.". Para el turno largo, "Dame un segundito.".
 3. **TTS del agente** (`build_agent_config`, `deploy/elevenlabs_agent.py`):
 
    | Ajuste | Antes | Ahora |
