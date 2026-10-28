@@ -254,6 +254,8 @@ DEMO_SCENARIOS: tuple[DemoScenario, ...] = (
         (
             _welcome("Sara Gómez"),
             DemoTurn("No tengo carnet de conducir todavía", {"has_license": False}),
+            # Spec 023: Sofía lo confirma antes de descartar.
+            DemoTurn("No, no tengo", {"has_license": False}),
         ),
         expected_status=CandidateStatus.DISQUALIFIED,
     ),
@@ -272,6 +274,7 @@ DEMO_SCENARIOS: tuple[DemoScenario, ...] = (
                     "city": "Guadalajara",
                 },
             ),
+            DemoTurn("Sí, tipo B, y en moto", {"license_type": "B", "vehicle_type": "motorcycle"}),
         ),
         expected_status=CandidateStatus.DISQUALIFIED,
     ),
@@ -290,6 +293,7 @@ DEMO_SCENARIOS: tuple[DemoScenario, ...] = (
                     "city": "Salamanca",
                 },
             ),
+            DemoTurn("Sí, en Salamanca", {"city": "Salamanca"}),
         ),
         expected_status=CandidateStatus.DISQUALIFIED,
     ),

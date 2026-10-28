@@ -41,6 +41,20 @@ templates:
     es: "Gracias, {first_name}. Por ahora no tenemos locales en tu ciudad, así que no podemos avanzar. ¡Ojalá pronto!"
     en: "Thanks, {first_name}. We don't have locations in your city yet, so we can't move forward. Hopefully soon!"
 
+  # Spec 023: antes de descartar se vuelve a preguntar el dato, de forma neutra (sin decir
+  # qué se entendió ni que descarta).
+  confirm_license:
+    es: "Perdona, {first_name}, para confirmar: ¿tienes {license_term} vigente? Responde sí o no."
+    en: "Sorry, {first_name}, just to confirm: do you have a valid driver's license? Yes or no?"
+
+  confirm_license_vehicle:
+    es: "Perdona, {first_name}, para confirmar: ¿qué tipo de {license_term} tienes y con qué vehículo repartirías?"
+    en: "Sorry, {first_name}, just to confirm: what type of driver's license do you have, and what vehicle would you deliver with?"
+
+  confirm_city:
+    es: "Perdona, {first_name}, para confirmar: ¿en qué ciudad vives o quieres repartir?"
+    en: "Sorry, {first_name}, just to confirm: which city do you live in or want to deliver in?"
+
   qualified_next_steps:
     es: "¡Listo, {first_name}! 🎉 Tu postulación quedó completa. Un reclutador de {client_name} te contactará en las próximas {sla_hours} h."
     en: "All set, {first_name}! 🎉 Your application is complete. A {client_name} recruiter will contact you within {sla_hours} hours."
@@ -110,6 +124,11 @@ templates:
   voice_wait_more:
     es: "Un momento más, ya casi lo tengo."
     en: "Just a moment more, almost there."
+
+  # Spec 023: si el candidato solo dijo una muletilla ("Eh.") y ElevenLabs cortó el turno.
+  voice_listening:
+    es: "Te escucho, sin prisa."
+    en: "I'm listening, no rush."
 
   # Si el candidato habla mientras Sofía todavía procesa lo anterior.
   voice_busy:

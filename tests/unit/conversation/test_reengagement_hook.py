@@ -148,10 +148,10 @@ def test_disqualified_candidate_leaves_no_touch(
     contacted: Candidate,
 ) -> None:
     agent.queue(
-        ExtractionOutcome(updates=ScreeningData(has_license=False), provided_fields=["has_license"])
+        ExtractionOutcome(updates=ScreeningData(consent=False), provided_fields=["consent"])
     )
 
-    orchestrator.handle(inbox.batch("no tengo carnet"))
+    orchestrator.handle(inbox.batch("no acepto"))
 
     candidate = _reload(repository, contacted)
     assert candidate.status == CandidateStatus.DISQUALIFIED

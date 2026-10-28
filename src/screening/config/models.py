@@ -167,6 +167,13 @@ class KnockoutRule(StrictModel):
     condition: Condition
     reason_code: str
     message_template: str
+    confirm_template: str | None = Field(
+        default=None,
+        description=(
+            "Spec 023: plantilla que vuelve a preguntar el dato una vez antes de descartar. "
+            "Sin ella se descarta a la primera."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_requires(self) -> KnockoutRule:
@@ -383,6 +390,7 @@ class AppConfig(StrictModel):
                 raise ValueError(f"a la plantilla {key!r} le faltan idiomas: {sorted(missing)}")
 
         referenced = {r.message_template for r in self.knockout_rules}
+        referenced |= {r.confirm_template for r in self.knockout_rules if r.confirm_template}
         referenced |= {s.template for c in self.cadences.cadences for s in c.steps}
         if self.scheduling is not None:
             self._check_scheduling(self.scheduling)

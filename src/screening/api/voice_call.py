@@ -50,6 +50,10 @@ _CANDIDATE_ID = re.compile(r"candidate_id:\s*([\w-]+)")
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 # Frases de espera que se alternan por turno: la misma en cada turno suena a máquina.
 WAIT_TEMPLATES = ("voice_wait", "voice_wait_2", "voice_wait_3")
+# Spec 023: muletillas sueltas ("Eh.", "Mmm…", "este"). ElevenLabs corta el turno en una
+# vacilación y llama con la transcripción provisional; no es una respuesta.
+_FILLER = re.compile(r"(?:e+h*m*|m+|h+m+|u+h+|u+m+|a+h+|o+h+|este)")
+_WORD = re.compile(r"[^\W\d_]+")
 
 
 class ConversationTokens(Protocol):
@@ -165,6 +169,12 @@ def is_retry(candidate: Candidate, text: str, messages: list[dict[str, Any]]) ->
     return not reply or reply not in previous_assistant(messages)
 
 
+def is_filler(text: str) -> bool:
+    """¿Solo muletillas? "Eh." o "Mmm, este…" sí; "Eh, sí" no."""
+    words = _WORD.findall(text.lower())
+    return bool(words) and all(_FILLER.fullmatch(w) for w in words)
+
+
 def wait_template(messages: list[dict[str, Any]]) -> str:
     """La frase de espera de este turno, según cuántas veces habló el candidato.
 
@@ -271,6 +281,9 @@ def build_voice_call_router(
           el turno en curso y se devuelve lo que Sofía todavía no dijo.
         """
         text = user_text_from(messages)[:MAX_MESSAGE_CHARS]
+        if text and is_filler(text) and not is_closed(candidate):
+            listening = speakable(render_template("voice_listening", candidate, config))
+            return TurnResult(listening, False)
         if text and not is_retry(candidate, text, messages):
             updated = send(candidate, text)
             if updated is None:
@@ -305,6 +318,20 @@ def build_voice_call_router(
         tool_names = {(t.get("function") or {}).get("name") for t in body.get("tools") or []}
         end_call = "end_call" in tool_names
         completion = _Completion(str(body.get("model") or "orbio"))
+
+        if end_call and is_closed(candidate):
+            # Spec 023: Sofía ya se despidió. ElevenLabs vuelve a pedir (p. ej. con la
+            # transcripción final): solo se corta, sin repetir el cierre.
+            if not body.get("stream"):
+                return completion.message("", end_call=True)
+
+            async def hang_up() -> AsyncIterator[str]:
+                yield completion.chunk({"role": "assistant", "content": ""})
+                yield completion.chunk({"tool_calls": [completion.end_call(index=0)]})
+                yield completion.chunk({}, finish_reason="tool_calls")
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(hang_up(), media_type="text/event-stream")
 
         if not body.get("stream"):
             started = time.monotonic()

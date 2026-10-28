@@ -20,6 +20,7 @@ from screening.api.voice_call import (
     CallSettings,
     build_voice_call_router,
     candidate_id_from,
+    is_filler,
     user_text_from,
     wait_template,
 )
@@ -435,6 +436,65 @@ def test_closed_conversation_ends_the_call(client: TestClient, agent: ScriptedAg
     assert [c["function"]["name"] for c in calls] == ["end_call"]
     assert events[-1]["choices"][0]["finish_reason"] == "tool_calls"
     assert streamed_text(events).strip()  # se despide antes de colgar
+
+
+def test_request_after_the_goodbye_only_hangs_up(
+    client: TestClient, agent: ScriptedAgent, repository: InMemoryCandidateRepository
+) -> None:
+    # Spec 023: ElevenLabs volvía a pedir con la transcripción final y el cierre salía 3 veces.
+    session = start(client)
+    agent.queue(ExtractionOutcome(provided_fields=["consent"], updates={"consent": False}))
+    tools = [END_CALL_TOOL]
+    client.post(
+        LLM_PATH,
+        json=completion_body(session.chat.candidate_id, "no", stream=True, tools=tools),
+        headers=AUTH,
+    )
+    stored = repository.get(session.chat.candidate_id)
+    assert stored is not None
+    messages_before = len(stored.messages)
+
+    response = client.post(
+        LLM_PATH,
+        json=completion_body(session.chat.candidate_id, "no, perdón, sí", stream=True, tools=tools),
+        headers=AUTH,
+    )
+
+    events = sse_events(response)
+    calls = [call for e in events for call in e["choices"][0]["delta"].get("tool_calls") or []]
+    assert [c["function"]["name"] for c in calls] == ["end_call"]
+    assert streamed_text(events).strip() == ""  # no repite el cierre
+    stored = repository.get(session.chat.candidate_id)
+    assert stored is not None and len(stored.messages) == messages_before
+
+
+@pytest.mark.parametrize("text", ["Eh.", "Eeeh…", "Mmm, este", "ehm"])
+def test_filler_only_turn_is_not_processed(
+    client: TestClient,
+    agent: ScriptedAgent,
+    repository: InMemoryCandidateRepository,
+    app_config: AppConfig,
+    text: str,
+) -> None:
+    session = start(client)
+
+    body = client.post(
+        LLM_PATH, json=completion_body(session.chat.candidate_id, text), headers=AUTH
+    ).json()
+
+    assert body["choices"][0]["message"]["content"] == app_config.templates["voice_listening"]["es"]
+    stored = repository.get(session.chat.candidate_id)
+    assert stored is not None
+    assert [m for m in stored.messages if m.role == MessageRole.CANDIDATE] == []
+    assert agent.extract_calls == []
+
+
+@pytest.mark.parametrize(
+    ("text", "filler"),
+    [("Eh.", True), ("Mmm…", True), ("Eh, sí", False), ("no", False), ("este lunes", False)],
+)
+def test_is_filler(text: str, filler: bool) -> None:
+    assert is_filler(text) is filler
 
 
 def test_closed_conversation_json_without_end_call_tool(

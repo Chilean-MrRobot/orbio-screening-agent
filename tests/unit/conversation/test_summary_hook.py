@@ -74,8 +74,8 @@ def test_summary_is_generated_when_qualified_after_the_final_message(
 def test_summary_is_generated_when_disqualified(
     contacted, orchestrator, agent, inbox, repository, summarizer
 ) -> None:
-    agent.queue(extraction(consent=True, has_license=False))
-    orchestrator.handle(inbox.batch("no tengo carnet"))
+    agent.queue(extraction(consent=False))  # sin confirmación (spec 023): descarta a la primera
+    orchestrator.handle(inbox.batch("no acepto"))
 
     candidate = saved(repository)
     assert candidate.status == CandidateStatus.DISQUALIFIED
@@ -106,8 +106,8 @@ def test_without_summarizer_nothing_happens(repository, agent, channel, clock, a
     )
     inbox = Inbox(clock)
     orchestrator.start_application(dict(APPLICATION))
-    agent.queue(extraction(consent=True, has_license=False))
-    orchestrator.handle(inbox.batch("no tengo carnet"))
+    agent.queue(extraction(consent=False))
+    orchestrator.handle(inbox.batch("no acepto"))
 
     candidate = saved(repository)
     assert candidate.status == CandidateStatus.DISQUALIFIED

@@ -20,6 +20,7 @@ from screening.adapters.memory import InMemoryInterviewSlotStore, InMemoryLeaseS
 from screening.channels import CandidateBusyError, InboundBatch
 from screening.clock import Clock
 from screening.config import AppConfig
+from screening.config.models import KnockoutRule
 from screening.conversation.interviews import confirmation_variables, offer_variables
 from screening.conversation.messages import render_template
 from screening.conversation.stages import CONFIRMATION_FIELD, current_stage, missing_fields
@@ -63,6 +64,8 @@ logger = logging.getLogger(__name__)
 
 # Diseño §6: tras 2 intentos inválidos el campo queda en `needs_review` y se sigue.
 MAX_INVALID_ATTEMPTS = 2
+# Spec 023: antes de descartar por un dato recién dado, se vuelve a preguntar una vez.
+CONFIRMATION_REQUESTED = "knockout_confirmation_requested"
 
 # Estados en los que la conversación sigue abierta; los tres primeros pasan a `in_screening`.
 RESUMING_STATUSES = {CandidateStatus.NEW, CandidateStatus.CONTACTED, CandidateStatus.NO_RESPONSE}
@@ -253,6 +256,7 @@ class ConversationOrchestrator:
             self._repository.save(candidate)
             return
 
+        before = candidate.data.model_copy(deep=True)
         changed = self._apply_updates(candidate, outcome, now)
         retry = self._register_invalid(candidate, outcome, changed, now)
         if changed:
@@ -263,6 +267,11 @@ class ConversationOrchestrator:
         self._repository.save(candidate)
 
         if evaluation is not None and evaluation.result and not evaluation.result.passed:
+            rule = self._rule(evaluation.result.failed_rule)
+            confirm = self._fields_to_confirm(candidate, rule, changed)
+            if rule is not None and rule.confirm_template and confirm:
+                self._request_confirmation(candidate, rule, confirm, before, now)
+                return
             self._disqualify(candidate, evaluation)
             return
 
@@ -365,6 +374,55 @@ class ConversationOrchestrator:
             failed_rule=result.failed_rule if result else None,
             reason_code=result.reason_code if result else None,
         )
+
+    def _rule(self, name: str | None) -> KnockoutRule | None:
+        return next((r for r in self._config.knockout_rules if r.name == name), None)
+
+    def _fields_to_confirm(
+        self, candidate: Candidate, rule: KnockoutRule | None, changed: list[str]
+    ) -> list[str]:
+        """Spec 023: los campos recién dados de la regla que falló, si hay que confirmarlos.
+
+        Vacío (se descarta directo) si la regla no tiene `confirm_template`, si sus campos no
+        cambiaron en este turno o si ya se pidió confirmarla una vez.
+        """
+        if rule is None or not rule.confirm_template:
+            return []
+        if any(
+            e.type == CONFIRMATION_REQUESTED and e.detail.get("rule") == rule.name
+            for e in candidate.timeline
+        ):
+            return []
+        fields = dict.fromkeys(f.split(".", 1)[0] for f in rule.requires)
+        return [f for f in fields if f in changed]
+
+    def _request_confirmation(
+        self,
+        candidate: Candidate,
+        rule: KnockoutRule,
+        fields: list[str],
+        before: ScreeningData,
+        now: datetime,
+    ) -> None:
+        """Vuelve los campos a su valor anterior y los pregunta de nuevo con la plantilla de
+        la regla (texto fijo: la pregunta que decide un descarte no queda en manos del LLM)."""
+        assert rule.confirm_template is not None
+        understood = candidate.data.model_dump(mode="json", include=set(fields))
+        for name in fields:
+            setattr(candidate.data, name, getattr(before, name))
+        candidate.record_event(
+            now,
+            CONFIRMATION_REQUESTED,
+            rule=rule.name,
+            reason_code=rule.reason_code,
+            fields=understood,
+        )
+        evaluation = self._evaluate(candidate)
+        candidate.knockout = evaluation.result if evaluation is not None else None
+        candidate.set_stage(current_stage(candidate, evaluation, self._config), now)
+        self._repository.save(candidate)
+        template = rule.confirm_template
+        self._send(candidate, render_template(template, candidate, self._config), template)
 
     def _disqualify(self, candidate: Candidate, evaluation: KnockoutEvaluation) -> None:
         now = self._clock.now()

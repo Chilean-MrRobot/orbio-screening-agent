@@ -156,11 +156,35 @@ def test_score_uses_the_clock_date(
 # --- Descartes -------------------------------------------------------------------
 
 
+def test_refused_consent_disqualifies_without_confirmation(
+    contacted: Candidate,
+    orchestrator: ConversationOrchestrator,
+    agent: ScriptedAgent,
+    channel: RecordingChannel,
+    inbox: Inbox,
+    repository: InMemoryCandidateRepository,
+) -> None:
+    agent.queue(extraction(consent=False))
+    orchestrator.handle(inbox.batch("no acepto"))
+
+    candidate = saved(repository)
+    assert candidate.status == CandidateStatus.DISQUALIFIED
+    assert candidate.knockout is not None and candidate.knockout.reason_code == "no_consent"
+    assert channel.texts[-1].startswith("Entendido, Lucía. Sin tu autorización")
+    assert agent.reply_calls == []
+    assert events(candidate, "knockout_confirmation_requested") == []
+
+
 @pytest.mark.parametrize(
-    ("answer", "reason", "text_start"),
+    ("answer", "confirm", "reason", "question", "text_start"),
     [
-        ({"consent": False}, "no_consent", "Entendido, Lucía. Sin tu autorización"),
-        ({"consent": True, "has_license": False}, "no_license", "Gracias por contarme, Lucía"),
+        (
+            {"consent": True, "has_license": False},
+            ["has_license"],
+            "no_license",
+            "Perdona, Lucía, para confirmar: ¿tienes carnet de conducir vigente?",
+            "Gracias por contarme, Lucía",
+        ),
         (
             {
                 "consent": True,
@@ -168,13 +192,21 @@ def test_score_uses_the_clock_date(
                 "license_type": "AM",
                 "vehicle_type": VehicleType.CAR,
             },
+            ["license_type", "vehicle_type"],
             "license_vehicle_mismatch",
+            "Perdona, Lucía, para confirmar: ¿qué tipo de carnet de conducir tienes",
             "Gracias, Lucía. Tu carnet de conducir no habilita",
         ),
-        ({"consent": True, "city": "Lugo"}, "out_of_service_area", "Gracias, Lucía. Por ahora"),
+        (
+            {"consent": True, "city": "Lugo"},
+            ["city"],
+            "out_of_service_area",
+            "Perdona, Lucía, para confirmar: ¿en qué ciudad vives",
+            "Gracias, Lucía. Por ahora",
+        ),
     ],
 )
-def test_failed_rule_disqualifies_with_its_template(
+def test_failed_rule_is_confirmed_before_disqualifying(
     contacted: Candidate,
     orchestrator: ConversationOrchestrator,
     agent: ScriptedAgent,
@@ -182,11 +214,27 @@ def test_failed_rule_disqualifies_with_its_template(
     inbox: Inbox,
     repository: InMemoryCandidateRepository,
     answer: dict[str, object],
+    confirm: list[str],
     reason: str,
+    question: str,
     text_start: str,
 ) -> None:
     agent.queue(extraction(**answer))
     orchestrator.handle(inbox.batch("respuesta"))
+
+    candidate = saved(repository)
+    assert candidate.status == CandidateStatus.IN_SCREENING
+    assert candidate.stage == Stage.KNOCKOUT
+    assert all(getattr(candidate.data, f) is None for f in confirm)
+    [requested] = events(candidate, "knockout_confirmation_requested")
+    assert requested["reason_code"] == reason
+    assert sorted(requested["fields"]) == sorted(confirm)
+    # Texto fijo de la regla: la pregunta que decide un descarte no la redacta el LLM.
+    assert channel.texts[-1].startswith(question)
+    assert agent.reply_calls == []
+
+    agent.queue(extraction(**answer))
+    orchestrator.handle(inbox.batch("respuesta otra vez"))
 
     candidate = saved(repository)
     assert candidate.status == CandidateStatus.DISQUALIFIED
@@ -195,6 +243,49 @@ def test_failed_rule_disqualifies_with_its_template(
     assert events(candidate, "status_changed")[-1]["reason"] == reason
     assert channel.texts[-1].startswith(text_start)
     assert agent.reply_calls == []
+
+
+def test_confirmation_that_passes_continues_the_screening(
+    contacted: Candidate,
+    orchestrator: ConversationOrchestrator,
+    agent: ScriptedAgent,
+    inbox: Inbox,
+    repository: InMemoryCandidateRepository,
+) -> None:
+    # La llamada real: "Eeeh, no." (transcripción provisional) y después "sí, sí tengo".
+    agent.queue(extraction(consent=True, has_license=False), extraction(has_license=True))
+    orchestrator.handle(inbox.batch("Eeeh, no."))
+    orchestrator.handle(inbox.batch("sí, sí tengo"))
+
+    candidate = saved(repository)
+    assert candidate.status == CandidateStatus.IN_SCREENING
+    assert candidate.data.has_license is True
+    assert candidate.stage == Stage.KNOCKOUT
+    assert agent.reply_calls[-1].ask_fields[0] == "license_type"
+    assert len(events(candidate, "knockout_confirmation_requested")) == 1
+
+
+def test_rule_without_confirm_disqualifies_at_once(
+    contacted: Candidate,
+    agent: ScriptedAgent,
+    inbox: Inbox,
+    repository: InMemoryCandidateRepository,
+    channel: RecordingChannel,
+    clock,
+    app_config,
+) -> None:
+    rules = [
+        r.model_copy(update={"confirm_template": None}) if r.name == "has_license" else r
+        for r in app_config.knockout_rules
+    ]
+    config = app_config.model_copy(update={"knockout_rules": rules})
+    orchestrator = ConversationOrchestrator(
+        repository=repository, agent=agent, channel=channel, clock=clock, config=config
+    )
+    agent.queue(extraction(consent=True, has_license=False))
+    orchestrator.handle(inbox.batch("no tengo"))
+
+    assert saved(repository).status == CandidateStatus.DISQUALIFIED
 
 
 def test_disqualification_uses_regional_vocabulary(
@@ -214,8 +305,9 @@ def test_disqualification_uses_regional_vocabulary(
             "country": "MX",
         }
     )
-    agent.queue(extraction(consent=True, has_license=False))
+    agent.queue(extraction(consent=True, has_license=False), extraction(has_license=False))
     orchestrator.handle(inbox.batch("no tengo", sender=mexican))
+    orchestrator.handle(inbox.batch("no, no tengo", sender=mexican))
 
     assert "licencia de manejo" in channel.texts[-1]
 
@@ -227,10 +319,11 @@ def test_disqualification_message_follows_the_candidate_language(
     channel: RecordingChannel,
     inbox: Inbox,
 ) -> None:
-    outcome = extraction(consent=True, has_license=False)
-    outcome.language = Language.EN
-    agent.queue(outcome)
+    first, second = extraction(consent=True, has_license=False), extraction(has_license=False)
+    first.language = second.language = Language.EN
+    agent.queue(first, second)
     orchestrator.handle(inbox.batch("I don't have a license"))
+    orchestrator.handle(inbox.batch("No, I don't"))
 
     assert channel.texts[-1].startswith("Thanks for letting me know, Lucía")
 
@@ -244,8 +337,9 @@ def test_correction_reruns_rules_and_can_disqualify(
 ) -> None:
     advance_to_closing(orchestrator, agent, inbox)
 
-    agent.queue(extraction(city="Lugo"))
+    agent.queue(extraction(city="Lugo"), extraction(city="Lugo"))
     orchestrator.handle(inbox.batch("perdón, en realidad vivo en Lugo"))
+    orchestrator.handle(inbox.batch("sí, en Lugo"))
 
     candidate = saved(repository)
     assert candidate.data.city == "Lugo"
